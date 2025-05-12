@@ -1,12 +1,16 @@
 #!/bin/bash
 
-# uninstall.sh - Eltávolító szkript e-paper weblap megjelenítőhöz
-# Raspberry Pi Zero 2W + Waveshare 4.01 inch HAT (F) e-paper kijelzőhöz
-# Frissítve a virtuális környezet kezelésére
+# uninstall.sh - Frissített eltávolító szkript e-paper weblap megjelenítőhöz
+# Raspberry Pi + Waveshare 4.01 inch HAT (F) e-paper kijelzőhöz
+# Frissítve: 2025.05.12 - Dinamikus felhasználó azonosítással
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="uninstall_log.txt"
 echo "Eltávolítás indítása: $(date)" | tee -a "$LOG_FILE"
+
+# Aktuális felhasználó azonosítása
+CURRENT_USER=$(whoami)
+echo "Aktuális felhasználó: $CURRENT_USER" | tee -a "$LOG_FILE"
 
 # Hibakezelő függvény
 handle_error() {
