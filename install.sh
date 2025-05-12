@@ -1,12 +1,16 @@
 #!/bin/bash
 
-# install.sh - Teljesen frissített telepítő szkript e-paper weblap megjelenítőhöz
-# Raspberry Pi Zero 2W + Waveshare 4.01 inch HAT (F) 7 színű e-paper kijelzőhöz
-# Frissítve: 2025.05.12 - externally-managed-environment hiba javítása és virtuális környezet használata
+# install.sh - Dinamikus felhasználó-azonosítással javított telepítő szkript
+# Raspberry Pi + Waveshare 4.01 inch HAT (F) 7 színű e-paper kijelzőhöz
+# Frissítve: 2025.05.12
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="install_log.txt"
 echo "Telepítés indítása: $(date)" | tee -a "$LOG_FILE"
+
+# Aktuális felhasználó azonosítása a pi helyett
+CURRENT_USER=$(whoami)
+echo "Aktuális felhasználó: $CURRENT_USER" | tee -a "$LOG_FILE"
 
 # Hibakezelő függvény
 handle_error() {
@@ -25,7 +29,7 @@ check_success() {
 # Telepítési könyvtár létrehozása
 INSTALL_DIR="/opt/epaper-display"
 VENV_DIR="${INSTALL_DIR}/venv"  # Virtuális környezet könyvtára
-echo "Telepítési könyvtár létrehozása..." | tee -a "$LOG_FILE"
+echo "Telepítési könyvtár létrehozása: $INSTALL_DIR" | tee -a "$LOG_FILE"
 sudo mkdir -p "$INSTALL_DIR" 2>> "$LOG_FILE"
 check_success "Nem sikerült létrehozni a telepítési könyvtárat"
 
@@ -56,7 +60,7 @@ sudo apt-get install -y python3-venv 2>> "$LOG_FILE"
 check_success "Nem sikerült telepíteni a python3-venv csomagot"
 
 # Több módszer kipróbálása a csomagtelepítéshez
-echo "Egyéb rendszercsomagok telepítése..." | tee -a "$LOG_FILE"
+echo "Egyéb rendszercsomagok telepítése (ez eltarthat egy ideig)..." | tee -a "$LOG_FILE"
 # Először APT-val próbáljuk
 sudo apt-get install -y python3-pil python3-numpy git xvfb scrot 2>> "$LOG_FILE" || true
 # Python-GPIO és SPI modulok telepítése APT-tal
@@ -70,18 +74,36 @@ if ! sudo apt-get install -y wkhtmltopdf 2>> "$LOG_FILE"; then
 fi
 
 # Virtuális környezet létrehozása
-echo "Python virtuális környezet létrehozása..." | tee -a "$LOG_FILE"
+echo "Python virtuális környezet létrehozása: $VENV_DIR" | tee -a "$LOG_FILE"
 sudo $PYTHON_CMD -m venv "$VENV_DIR" 2>> "$LOG_FILE"
 check_success "Nem sikerült létrehozni a virtuális környezetet"
 
-# Jogosultságok beállítása
-sudo chown -R pi:pi "$VENV_DIR" 2>> "$LOG_FILE" || true
+# Jogosultságok beállítása a jelenlegi felhasználóra
+echo "Jogosultságok beállítása a felhasználó számára: $CURRENT_USER" | tee -a "$LOG_FILE"
+sudo chown -R $CURRENT_USER:$CURRENT_USER "$VENV_DIR" 2>> "$LOG_FILE"
+sudo chown -R $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR" 2>> "$LOG_FILE"
+check_success "Nem sikerült beállítani a jogosultságokat"
 
 # Python függőségek telepítése a virtuális környezetbe
-echo "Python függőségek telepítése a virtuális környezetbe..." | tee -a "$LOG_FILE"
+echo "Python függőségek telepítése a virtuális környezetbe (ez eltarthat egy ideig)..." | tee -a "$LOG_FILE"
 "$VENV_DIR/bin/pip" install --upgrade pip 2>> "$LOG_FILE"
-"$VENV_DIR/bin/pip" install RPi.GPIO spidev Pillow numpy 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni a Python függőségeket a virtuális környezetbe"
+check_success "Nem sikerült frissíteni a pip-et"
+
+echo "RPi.GPIO telepítése..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install RPi.GPIO 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni az RPi.GPIO modult"
+
+echo "spidev telepítése..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install spidev 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni a spidev modult"
+
+echo "Pillow telepítése (ez egy nagyméretű csomag, akár 5-10 percig is eltarthat)..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install Pillow 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni a Pillow modult"
+
+echo "NumPy telepítése (ez egy nagyméretű csomag, akár 5-10 percig is eltarthat)..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install numpy 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni a NumPy modult"
 
 # Waveshare e-paper könyvtár klónozása és felderítése
 echo "Waveshare e-paper könyvtár klónozása és felderítése..." | tee -a "$LOG_FILE"
@@ -586,7 +608,7 @@ check_success "Nem sikerült létrehozni a Python szkriptet"
 
 # A szkript futtathatóvá tétele és virtuális környezet használata
 echo "Python szkript konfigurálása..." | tee -a "$LOG_FILE"
-# A shkript első sorát módosítjuk, hogy a virtuális környezetünket használja
+# A szkript első sorát módosítjuk, hogy a virtuális környezetünket használja
 sudo sed -i "1s|.*|#!$VENV_DIR/bin/python3|" "$INSTALL_DIR/display_webpage.py"
 sudo chmod +x "$INSTALL_DIR/display_webpage.py" 2>> "$LOG_FILE"
 check_success "Nem sikerült futtathatóvá tenni a szkriptet"
@@ -602,7 +624,7 @@ DefaultDependencies=no
 
 [Service]
 Type=simple
-User=pi
+User=$CURRENT_USER
 WorkingDirectory=$INSTALL_DIR
 ExecStart=$VENV_DIR/bin/python3 $INSTALL_DIR/display_webpage.py
 Restart=always
@@ -625,7 +647,7 @@ check_success "Nem sikerült létrehozni a systemd szolgáltatást"
 # Log könyvtárak és fájlok létrehozása, jogosultságok beállítása
 echo "Log könyvtárak létrehozása és jogosultságok beállítása..." | tee -a "$LOG_FILE"
 sudo touch /var/log/epaper-display.log /var/log/epaper-display-stdout.log /var/log/epaper-display-stderr.log 2>> "$LOG_FILE"
-sudo chown pi:pi /var/log/epaper-display*.log 2>> "$LOG_FILE"
+sudo chown $CURRENT_USER:$CURRENT_USER /var/log/epaper-display*.log 2>> "$LOG_FILE"
 
 # Szolgáltatás engedélyezése és indítása
 echo "Szolgáltatás engedélyezése és indítása..." | tee -a "$LOG_FILE"
@@ -791,7 +813,9 @@ echo "Szolgáltatás indítása..." | tee -a "$LOG_FILE"
 sudo systemctl start epaper-display.service 2>> "$LOG_FILE"
 if [ $? -ne 0 ]; then
     echo "Figyelmeztetés: Nem sikerült elindítani a szolgáltatást. Ez hiányzó függőségek vagy hardveres konfiguráció miatt lehet." | tee -a "$LOG_FILE"
-    echo "Próbáld manuálisan elindítani az újraindítás után: sudo systemctl start epaper-display.service" | tee -a "$LOG_FILE"
+    echo "A szolgáltatás állapota:" | tee -a "$LOG_FILE"
+    sudo systemctl status epaper-display.service | tee -a "$LOG_FILE"
+    echo "Próbáld manuálisan elindítani újraindítás után: sudo systemctl start epaper-display.service" | tee -a "$LOG_FILE"
 fi
 
 # Összefoglaló
@@ -800,6 +824,7 @@ echo "Telepítési összefoglaló:" | tee -a "$LOG_FILE"
 echo "=====================" | tee -a "$LOG_FILE"
 echo "Telepítési könyvtár: $INSTALL_DIR" | tee -a "$LOG_FILE"
 echo "Virtuális környezet: $VENV_DIR" | tee -a "$LOG_FILE"
+echo "Felhasználó: $CURRENT_USER" | tee -a "$LOG_FILE"
 echo "URL konfigurációs parancs: epaper-config <url>" | tee -a "$LOG_FILE"
 echo "Szolgáltatáskezelés: epaper-service {start|stop|restart|status}" | tee -a "$LOG_FILE"
 echo "Logok megtekintése: epaper-logs {service|app|stdout|stderr|all}" | tee -a "$LOG_FILE"
