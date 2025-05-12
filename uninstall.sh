@@ -87,6 +87,15 @@ sudo pkill -f "midori" 2>/dev/null || true
 sudo pkill -f "wkhtmltoimage" 2>/dev/null || true
 sudo pkill -f "cutycapt" 2>/dev/null || true
 
+# Ideiglenes könyvtárak tisztítása
+echo "Ideiglenes könyvtárak tisztítása..." | tee -a "$LOG_FILE"
+if [ -d "/tmp/screenshot" ]; then
+    sudo rm -rf /tmp/screenshot 2>> "$LOG_FILE" || true
+fi
+if [ -d "/tmp/waveshare-install" ]; then
+    sudo rm -rf /tmp/waveshare-install 2>> "$LOG_FILE" || true
+fi
+
 # Python függőségek eltávolításának kérdezése
 echo "El szeretnéd távolítani a Python függőségeket (RPi.GPIO, spidev)? (y/n)"
 read remove_deps
@@ -112,12 +121,6 @@ if [ "$disable_spi" = "y" ] || [ "$disable_spi" = "Y" ]; then
 else
     echo "SPI interfész engedélyezve marad." | tee -a "$LOG_FILE"
     REBOOT_REQUIRED=false
-fi
-
-# Ideiglenes könyvtárak tisztítása
-echo "Ideiglenes könyvtárak tisztítása..." | tee -a "$LOG_FILE"
-if [ -d "/tmp/screenshot" ]; then
-    sudo rm -rf /tmp/screenshot 2>> "$LOG_FILE" || true
 fi
 
 # Maradványok ellenőrzése és figyelmeztetés
