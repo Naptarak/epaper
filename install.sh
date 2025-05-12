@@ -2,7 +2,7 @@
 
 # install.sh - Dinamikus felhasználó-azonosítással javított telepítő szkript
 # Raspberry Pi + Waveshare 4.01 inch HAT (F) 7 színű e-paper kijelzőhöz
-# Frissítve: 2025.05.12
+# Frissítve: 2025.05.12 - Pillow és NumPy telepítési probléma javítva
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="install_log.txt"
@@ -59,10 +59,9 @@ echo "Python virtuális környezet támogatás telepítése..." | tee -a "$LOG_F
 sudo apt-get install -y python3-venv 2>> "$LOG_FILE"
 check_success "Nem sikerült telepíteni a python3-venv csomagot"
 
-# Több módszer kipróbálása a csomagtelepítéshez
-echo "Egyéb rendszercsomagok telepítése (ez eltarthat egy ideig)..." | tee -a "$LOG_FILE"
-# Először APT-val próbáljuk
-sudo apt-get install -y python3-pil python3-numpy git xvfb scrot 2>> "$LOG_FILE" || true
+# Alapvető rendszercsomagok telepítése
+echo "Alapvető rendszercsomagok telepítése..." | tee -a "$LOG_FILE"
+sudo apt-get install -y git xvfb scrot 2>> "$LOG_FILE" || true
 # Python-GPIO és SPI modulok telepítése APT-tal
 sudo apt-get install -y python3-rpi.gpio python3-spidev 2>> "$LOG_FILE" || true
 
@@ -97,13 +96,86 @@ echo "spidev telepítése..." | tee -a "$LOG_FILE"
 "$VENV_DIR/bin/pip" install spidev 2>> "$LOG_FILE"
 check_success "Nem sikerült telepíteni a spidev modult"
 
-echo "Pillow telepítése (ez egy nagyméretű csomag, akár 5-10 percig is eltarthat)..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install Pillow 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni a Pillow modult"
+# Pillow telepítéséhez szükséges rendszerfüggőségek telepítése
+echo "Pillow függőségek telepítése..." | tee -a "$LOG_FILE"
+sudo apt-get install -y python3-pil python3-pil.imagetk libjpeg-dev zlib1g-dev libfreetype6-dev liblcms2-dev libwebp-dev tcl8.6-dev tk8.6-dev python3-tk libharfbuzz-dev libfribidi-dev libxcb1-dev 2>> "$LOG_FILE" || true
 
-echo "NumPy telepítése (ez egy nagyméretű csomag, akár 5-10 percig is eltarthat)..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install numpy 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni a NumPy modult"
+# Először rendszerszintű Pillow telepítése APT-vel
+echo "Rendszerszintű Pillow telepítése (ajánlott mód)..." | tee -a "$LOG_FILE"
+sudo apt-get install -y python3-pil 2>> "$LOG_FILE"
+
+# Próbáljuk a Pillow-t előre fordított kerékkel telepíteni
+echo "Pillow telepítése előre fordított kerékkel (ez stabilabb, mint a build)..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install --only-binary=:all: Pillow 2>> "$LOG_FILE" || true
+
+# Ha még mindig nincs telepítve, akkor próbáljuk fordítás nélkül
+if ! "$VENV_DIR/bin/pip" show Pillow >/dev/null 2>&1; then
+    echo "Pillow telepítése sikertelen volt az előző módszerekkel, alternatív telepítési kísérlet..." | tee -a "$LOG_FILE"
+    
+    # Próbálkozás régebbi verzióval
+    echo "Pillow régebbi verziójának telepítési kísérlete..." | tee -a "$LOG_FILE"
+    "$VENV_DIR/bin/pip" install --only-binary=:all: Pillow==9.0.0 2>> "$LOG_FILE" || true
+    
+    if ! "$VENV_DIR/bin/pip" show Pillow >/dev/null 2>&1; then
+        # Pillow linkek létrehozása a rendszer Pillow-ból
+        SYSTEM_PIL_PATH=$(python3 -c "import PIL; print(PIL.__path__[0])" 2>/dev/null || echo "")
+        if [ -n "$SYSTEM_PIL_PATH" ] && [ -d "$SYSTEM_PIL_PATH" ]; then
+            echo "Rendszer PIL modul megtalálva: $SYSTEM_PIL_PATH. Symlink létrehozása..." | tee -a "$LOG_FILE"
+            VENV_SITE_PACKAGES="$VENV_DIR/lib/python$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages"
+            sudo mkdir -p "$VENV_SITE_PACKAGES/PIL"
+            sudo ln -sf "$SYSTEM_PIL_PATH"/* "$VENV_SITE_PACKAGES/PIL/"
+            echo "PIL szimbolikus linkek létrehozva a virtuális környezetben" | tee -a "$LOG_FILE"
+        else
+            echo "FIGYELMEZTETÉS: Nem sikerült telepíteni a Pillow modult, a képek megjelenítése korlátozott lesz" | tee -a "$LOG_FILE"
+        fi
+    fi
+fi
+
+# Ellenőrizzük, hogy végül sikerült-e telepíteni a Pillow-t
+VENV_SITE_PACKAGES="$VENV_DIR/lib/python$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages"
+if "$VENV_DIR/bin/pip" show Pillow >/dev/null 2>&1 || [ -e "$VENV_SITE_PACKAGES/PIL" ]; then
+    echo "Pillow sikeresen telepítve vagy szimbolikus linkkel elérhető" | tee -a "$LOG_FILE"
+else
+    echo "FIGYELMEZTETÉS: Pillow nem elérhető, de a telepítés folytatódik" | tee -a "$LOG_FILE"
+fi
+
+# NumPy telepítése rendszercsomagként
+echo "NumPy telepítése rendszerszinten (ajánlott mód)..." | tee -a "$LOG_FILE"
+sudo apt-get install -y python3-numpy 2>> "$LOG_FILE"
+
+# Próbáljuk a NumPy-t előre fordított kerékkel telepíteni a virtuális környezetbe
+echo "NumPy telepítése előre fordított kerékkel..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install --only-binary=:all: numpy 2>> "$LOG_FILE" || true
+
+# Ha még mindig nincs telepítve, akkor próbáljuk a szimbolikus linkeket
+if ! "$VENV_DIR/bin/pip" show numpy >/dev/null 2>&1; then
+    echo "NumPy telepítése sikertelen volt az előző módszerekkel, alternatív telepítési kísérlet..." | tee -a "$LOG_FILE"
+    
+    # Próbálkozás régebbi verzióval
+    echo "NumPy régebbi verziójának telepítési kísérlete..." | tee -a "$LOG_FILE"
+    "$VENV_DIR/bin/pip" install --only-binary=:all: numpy==1.22.4 2>> "$LOG_FILE" || true
+    
+    if ! "$VENV_DIR/bin/pip" show numpy >/dev/null 2>&1; then
+        # NumPy linkek létrehozása a rendszer NumPy-ból
+        SYSTEM_NUMPY_PATH=$(python3 -c "import numpy; print(numpy.__path__[0])" 2>/dev/null || echo "")
+        if [ -n "$SYSTEM_NUMPY_PATH" ] && [ -d "$SYSTEM_NUMPY_PATH" ]; then
+            echo "Rendszer NumPy modul megtalálva: $SYSTEM_NUMPY_PATH. Symlink létrehozása..." | tee -a "$LOG_FILE"
+            VENV_SITE_PACKAGES="$VENV_DIR/lib/python$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages"
+            sudo mkdir -p "$VENV_SITE_PACKAGES/numpy"
+            sudo ln -sf "$SYSTEM_NUMPY_PATH"/* "$VENV_SITE_PACKAGES/numpy/"
+            echo "NumPy szimbolikus linkek létrehozva a virtuális környezetben" | tee -a "$LOG_FILE"
+        else
+            echo "FIGYELMEZTETÉS: Nem sikerült telepíteni a NumPy modult, bizonyos funkciók korlátozottak lehetnek" | tee -a "$LOG_FILE"
+        fi
+    fi
+fi
+
+# Ellenőrizzük, hogy végül sikerült-e telepíteni a NumPy-t
+if "$VENV_DIR/bin/pip" show numpy >/dev/null 2>&1 || [ -e "$VENV_SITE_PACKAGES/numpy" ]; then
+    echo "NumPy sikeresen telepítve vagy szimbolikus linkkel elérhető" | tee -a "$LOG_FILE"
+else
+    echo "FIGYELMEZTETÉS: NumPy nem elérhető, de a telepítés folytatódik" | tee -a "$LOG_FILE"
+fi
 
 # Waveshare e-paper könyvtár klónozása és felderítése
 echo "Waveshare e-paper könyvtár klónozása és felderítése..." | tee -a "$LOG_FILE"
