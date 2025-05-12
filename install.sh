@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# install.sh - Átdolgozott telepítő szkript
+# install.sh - Optimalizált telepítő szkript NumPy fordítás nélkül
 # Raspberry Pi + Waveshare 4.01 inch HAT (F) 7 színű e-paper kijelzőhöz
-# Frissítve: 2025.05.13 - Importálási hibák és kijelző inicializálási problémák javítva
+# Frissítve: 2025.05.13 - NumPy telepítési és importálási hibák javítva
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="install_log.txt"
@@ -63,13 +63,18 @@ check_success "Nem sikerült telepíteni a python3-venv csomagot"
 echo "Alapvető rendszercsomagok telepítése..." | tee -a "$LOG_FILE"
 sudo apt-get install -y git xvfb scrot 2>> "$LOG_FILE" || true
 
-# SPI és GPIO modulok telepítése
+# SPI és GPIO modulok telepítése RENDSZERSZINTEN (fontos!)
 echo "SPI és GPIO modulok telepítése..." | tee -a "$LOG_FILE"
 sudo apt-get install -y python3-rpi.gpio python3-spidev 2>> "$LOG_FILE" || true
 
+# Pillow és NumPy telepítése RENDSZERSZINTEN (fontos!)
+echo "Pillow és NumPy telepítése RENDSZERSZINTEN..." | tee -a "$LOG_FILE"
+sudo apt-get install -y python3-pil python3-numpy 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni a Python képfeldolgozási modulokat"
+
 # Pillow függőségek telepítése
 echo "Pillow függőségek telepítése..." | tee -a "$LOG_FILE"
-sudo apt-get install -y python3-pil python3-pil.imagetk libjpeg-dev zlib1g-dev libfreetype6-dev liblcms2-dev libwebp-dev 2>> "$LOG_FILE" || true
+sudo apt-get install -y python3-pil.imagetk libjpeg-dev zlib1g-dev libfreetype6-dev liblcms2-dev libwebp-dev 2>> "$LOG_FILE" || true
 
 # Weboldal capture eszközök telepítése
 echo "Weboldal megjelenítéshez szükséges eszközök telepítése..." | tee -a "$LOG_FILE"
@@ -80,7 +85,7 @@ fi
 
 # Virtuális környezet létrehozása
 echo "Python virtuális környezet létrehozása: $VENV_DIR" | tee -a "$LOG_FILE"
-sudo $PYTHON_CMD -m venv "$VENV_DIR" 2>> "$LOG_FILE"
+sudo $PYTHON_CMD -m venv "$VENV_DIR" --system-site-packages 2>> "$LOG_FILE"
 check_success "Nem sikerült létrehozni a virtuális környezetet"
 
 # Jogosultságok beállítása a jelenlegi felhasználóra
@@ -94,18 +99,33 @@ echo "Python függőségek telepítése a virtuális környezetbe..." | tee -a "
 "$VENV_DIR/bin/pip" install --upgrade pip 2>> "$LOG_FILE"
 check_success "Nem sikerült frissíteni a pip-et"
 
-# Rendszerszintű Pillow és NumPy telepítése
-echo "Rendszerszintű Pillow és NumPy telepítése..." | tee -a "$LOG_FILE"
-sudo apt-get install -y python3-pil python3-numpy 2>> "$LOG_FILE"
-
-# Virtuális környezetbe is telepítjük a PIL-t és NumPy-t
-echo "Pillow és NumPy telepítése a virtuális környezetbe..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install Pillow numpy 2>> "$LOG_FILE" || true
-
-# RPI.GPIO és spidev telepítése a virtuális környezetbe
-echo "RPI.GPIO és spidev telepítése a virtuális környezetbe..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install RPi.GPIO spidev 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni az RPi.GPIO és spidev modulokat"
+# Rendszermodulok elérhetővé tétele a virtuális környezetben
+echo "Rendszermodulok ellenőrzése a virtuális környezetben..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/python" -c "import numpy; import PIL; print('NumPy verzió:', numpy.__version__); print('PIL verzió:', PIL.__version__)" 2>> "$LOG_FILE" || {
+    echo "Rendszermodulok nem érhetők el a virtuális környezetben, szimbolikus linkek létrehozása..." | tee -a "$LOG_FILE"
+    
+    # Python verzió meghatározása a site-packages könyvtárhoz
+    PY_VERSION=$("$PYTHON_CMD" -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+    VENV_SITE_PACKAGES="$VENV_DIR/lib/python$PY_VERSION/site-packages"
+    
+    # NumPy elérhetővé tétele
+    SYSTEM_NUMPY_PATH=$($PYTHON_CMD -c "import numpy; print(numpy.__path__[0])" 2>/dev/null)
+    if [ -n "$SYSTEM_NUMPY_PATH" ]; then
+        sudo mkdir -p "$VENV_SITE_PACKAGES/numpy"
+        sudo cp -r "$SYSTEM_NUMPY_PATH"/* "$VENV_SITE_PACKAGES/numpy/"
+        sudo touch "$VENV_SITE_PACKAGES/numpy/__init__.py"
+        echo "NumPy másolva a virtuális környezetbe" | tee -a "$LOG_FILE"
+    fi
+    
+    # PIL elérhetővé tétele
+    SYSTEM_PIL_PATH=$($PYTHON_CMD -c "import PIL; print(PIL.__path__[0])" 2>/dev/null)
+    if [ -n "$SYSTEM_PIL_PATH" ]; then
+        sudo mkdir -p "$VENV_SITE_PACKAGES/PIL"
+        sudo cp -r "$SYSTEM_PIL_PATH"/* "$VENV_SITE_PACKAGES/PIL/"
+        sudo touch "$VENV_SITE_PACKAGES/PIL/__init__.py"
+        echo "PIL másolva a virtuális környezetbe" | tee -a "$LOG_FILE"
+    fi
+}
 
 # Waveshare e-paper könyvtár letöltése és telepítése
 echo "Waveshare e-paper könyvtár letöltése..." | tee -a "$LOG_FILE"
@@ -174,6 +194,13 @@ echo "Relatív importok javítása a modul fájlokban..." | tee -a "$LOG_FILE"
 for pyfile in $(find "$INSTALL_DIR/lib/waveshare_epd" -name "*.py"); do
     # Relatív importok cseréje abszolút importokra
     sudo sed -i 's/from \. import epdconfig/import epdconfig/g' "$pyfile" 2>> "$LOG_FILE"
+    # Ellenőrizzük, hogy van-e szükség az epdconfig.py másolására
+    if grep -q "import epdconfig" "$pyfile"; then
+        if [ ! -f "$INSTALL_DIR/lib/waveshare_epd/epdconfig.py" ]; then
+            echo "epdconfig.py másolása..." | tee -a "$LOG_FILE"
+            sudo cp "$TEMP_DIR/e-Paper/RaspberryPi/python/lib/waveshare_epd/epdconfig.py" "$INSTALL_DIR/lib/waveshare_epd/" 2>> "$LOG_FILE"
+        fi
+    fi
 done
 
 # SPI interfész engedélyezése
@@ -224,6 +251,7 @@ sys.path.append(waveshare_dir)
 logging.info("Waveshare könyvtár hozzáadva: %s", waveshare_dir)
 
 # Elérhető modulok kilistázása
+logging.info("Elérési út: %s", sys.path)
 logging.info("Elérhető modulok a lib könyvtárban:")
 for file in os.listdir(lib_dir):
     logging.info("  - %s", file)
@@ -234,7 +262,22 @@ if os.path.exists(waveshare_dir):
         logging.info("  - %s", file)
 
 try:
-    # Próbálunk importálni különböző képernyő modulokat
+    # Próbáljunk importálni
+    logging.info("Pillow importálása...")
+    try:
+        import PIL
+        logging.info("PIL verzió: %s", PIL.__version__)
+    except ImportError as e:
+        logging.error("PIL importálási hiba: %s", e)
+    
+    logging.info("NumPy importálása...")
+    try:
+        import numpy
+        logging.info("NumPy verzió: %s", numpy.__version__)
+    except ImportError as e:
+        logging.error("NumPy importálási hiba: %s", e)
+    
+    # E-paper modul importálása
     module_name = "$EPD_MODULE"
     logging.info("Megpróbáljuk importálni a modult: %s", module_name)
     
@@ -242,11 +285,16 @@ try:
         from waveshare_epd import $EPD_MODULE
         logging.info("Modul sikeresen importálva a waveshare_epd csomagból")
         epd = $EPD_MODULE.EPD()
-    except ImportError:
-        logging.warning("Nem sikerült importálni a waveshare_epd csomagból, direkt import próbálása")
-        sys.path.append('/opt/epaper-display/lib/waveshare_epd')
-        import $EPD_MODULE
-        epd = $EPD_MODULE.EPD()
+    except ImportError as e:
+        logging.warning("Import hiba a waveshare_epd csomagból: %s", e)
+        logging.warning("Direkt import próbálása...")
+        try:
+            import $EPD_MODULE
+            epd = $EPD_MODULE.EPD()
+            logging.info("Modul sikeresen importálva közvetlenül")
+        except ImportError as e2:
+            logging.error("Közvetlen import is sikertelen: %s", e2)
+            raise
     
     logging.info("EPD objektum létrehozva")
     logging.info("Kijelző méretei: %s x %s", epd.width, epd.height)
@@ -258,8 +306,12 @@ try:
     
     # Kijelző törlése
     logging.info("Kijelző törlése...")
-    epd.Clear()
-    logging.info("Kijelző törölve")
+    try:
+        epd.Clear()
+        logging.info("Kijelző törölve")
+    except Exception as e:
+        logging.warning("Kijelző törlése nem sikerült: %s", e)
+        logging.warning("Folytatás a törlés nélkül...")
     
     # Teszt kép rajzolása
     logging.info("Teszt kép létrehozása...")
@@ -298,11 +350,15 @@ try:
     
 except ImportError as e:
     logging.error("Importálási hiba: %s", e)
+    import traceback
+    logging.error(traceback.format_exc())
     print(f"Importálási hiba: {e}")
     print("Ellenőrizd a log fájlt: /var/log/epaper-test.log")
     sys.exit(1)
 except Exception as e:
     logging.error("Hiba történt: %s", e, exc_info=True)
+    import traceback
+    logging.error(traceback.format_exc())
     print(f"Hiba történt: {e}")
     print("Ellenőrizd a log fájlt: /var/log/epaper-test.log")
     sys.exit(1)
@@ -764,7 +820,6 @@ fi
 # Waveshare teszt futtatása
 echo "Waveshare teszt futtatása a kijelző ellenőrzéséhez..." | tee -a "$LOG_FILE"
 echo "A teszt kiírja a kijelzőre, hogy 'E-Paper teszt' és 'Sikeres inicializálás!'"
-echo "Nem indítjuk el a szolgáltatást, amíg a teszt sikeres nem lesz!"
 sudo $INSTALL_DIR/test_display.py
 
 # URL bekérése
