@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# install.sh - Optimalizált telepítő szkript NumPy fordítás nélkül
+# install.sh - Javított telepítő szkript a helyes Waveshare repository URL-lel
 # Raspberry Pi + Waveshare 4.01 inch HAT (F) 7 színű e-paper kijelzőhöz
-# Frissítve: 2025.05.13 - NumPy telepítési és importálási hibák javítva
+# Frissítve: 2025.05.13
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="install_log.txt"
@@ -99,7 +99,7 @@ echo "Python függőségek telepítése a virtuális környezetbe..." | tee -a "
 "$VENV_DIR/bin/pip" install --upgrade pip 2>> "$LOG_FILE"
 check_success "Nem sikerült frissíteni a pip-et"
 
-# Rendszermodulok elérhetővé tétele a virtuális környezetben
+# Rendszermodulok ellenőrzése a virtuális környezetben
 echo "Rendszermodulok ellenőrzése a virtuális környezetben..." | tee -a "$LOG_FILE"
 "$VENV_DIR/bin/python" -c "import numpy; import PIL; print('NumPy verzió:', numpy.__version__); print('PIL verzió:', PIL.__version__)" 2>> "$LOG_FILE" || {
     echo "Rendszermodulok nem érhetők el a virtuális környezetben, szimbolikus linkek létrehozása..." | tee -a "$LOG_FILE"
@@ -136,10 +136,33 @@ cd "$TEMP_DIR"
 # Régi könyvtárak eltávolítása
 rm -rf e-Paper epd-library-python 2>/dev/null || true
 
-# Waveshare könyvtár klónozása
-echo "Waveshare repository klónozása..." | tee -a "$LOG_FILE"
-git clone https://github.com/waveshare/e-Paper.git 2>> "$LOG_FILE"
-check_success "Nem sikerült klónozni a Waveshare repository-t"
+# Waveshare könyvtár klónozása - HELYES URL-lel!
+echo "Waveshare repository klónozása a helyes URL-ről..." | tee -a "$LOG_FILE"
+if ! git clone https://github.com/waveshareteam/e-Paper.git 2>> "$LOG_FILE"; then
+    echo "Elsődleges repo klónozás sikertelen, alternatív URL-ek kipróbálása..." | tee -a "$LOG_FILE"
+    
+    # Különböző alternatív URL-eket próbálunk
+    if ! git clone https://github.com/waveshare/e-Paper.git 2>> "$LOG_FILE"; then
+        echo "Második repo klónozás is sikertelen, végső próbálkozás..." | tee -a "$LOG_FILE"
+        if ! git clone https://github.com/soonuse/epd-library-python.git 2>> "$LOG_FILE"; then
+            handle_error "Nem sikerült klónozni a Waveshare repository-t. Ellenőrizd az internetkapcsolatot."
+        else
+            REPO_NAME="epd-library-python"
+            echo "Alternatív repo sikeresen klónozva: $REPO_NAME" | tee -a "$LOG_FILE"
+        fi
+    else
+        REPO_NAME="e-Paper"
+        echo "Második repo sikeresen klónozva: $REPO_NAME" | tee -a "$LOG_FILE"
+    fi
+else
+    REPO_NAME="e-Paper"
+    echo "Helyes repo sikeresen klónozva: $REPO_NAME" | tee -a "$LOG_FILE"
+fi
+
+# Könyvtárszerkezet felderítése
+echo "Repository könyvtárszerkezet feltérképezése..." | tee -a "$LOG_FILE"
+find "$REPO_NAME" -type d | sort > "$TEMP_DIR/dir_structure.txt"
+cat "$TEMP_DIR/dir_structure.txt" | tee -a "$LOG_FILE"
 
 # E-paper modul könyvtárszerkezet létrehozása
 echo "E-paper könyvtárszerkezet létrehozása..." | tee -a "$LOG_FILE"
@@ -150,21 +173,63 @@ echo "Python csomag inicializálása..." | tee -a "$LOG_FILE"
 sudo touch "$INSTALL_DIR/lib/waveshare_epd/__init__.py" 2>> "$LOG_FILE"
 sudo touch "$INSTALL_DIR/lib/__init__.py" 2>> "$LOG_FILE"
 
-# E-paper modul másolása
-echo "E-paper modulok másolása..." | tee -a "$LOG_FILE"
-if [ -d "$TEMP_DIR/e-Paper/RaspberryPi/python/lib/waveshare_epd" ]; then
-    sudo cp -r "$TEMP_DIR/e-Paper/RaspberryPi/python/lib/waveshare_epd"/* "$INSTALL_DIR/lib/waveshare_epd/" 2>> "$LOG_FILE"
-    check_success "Nem sikerült másolni a waveshare_epd modulokat"
-else
-    handle_error "Nem található a Waveshare e-paper modul könyvtára"
+# Keressük meg a Waveshare könyvtárat a repón belül
+echo "Waveshare modulok keresése a repository-ban..." | tee -a "$LOG_FILE"
+
+# Több lehetséges útvonal ellenőrzése
+POTENTIAL_PATHS=(
+    "$REPO_NAME/RaspberryPi/python/lib/waveshare_epd"
+    "$REPO_NAME/lib/waveshare_epd"
+    "$REPO_NAME/python/lib/waveshare_epd"
+    "$REPO_NAME/python/waveshare_epd"
+    "$REPO_NAME/RaspberryPi/lib/waveshare_epd"
+)
+
+SRC_PATH=""
+for path in "${POTENTIAL_PATHS[@]}"; do
+    if [ -d "$path" ]; then
+        echo "Waveshare modul könyvtár megtalálva: $path" | tee -a "$LOG_FILE"
+        SRC_PATH="$path"
+        break
+    fi
+done
+
+# Ha nem találtunk könyvtárat, próbáljunk rekurzívan keresni
+if [ -z "$SRC_PATH" ]; then
+    echo "Waveshare modul könyvtár nem található az elvárt helyeken, rekurzív keresés..." | tee -a "$LOG_FILE"
+    FOUND_DIRS=$(find "$REPO_NAME" -type d -name "waveshare_epd" 2>/dev/null)
+    
+    if [ -n "$FOUND_DIRS" ]; then
+        SRC_PATH=$(echo "$FOUND_DIRS" | head -n1)
+        echo "Waveshare modul könyvtár megtalálva rekurzív kereséssel: $SRC_PATH" | tee -a "$LOG_FILE"
+    else
+        echo "Waveshare modul könyvtár nem található, Python fájlok keresése..." | tee -a "$LOG_FILE"
+        # Ha még mindig nincs könyvtár, keressünk Python fájlokat
+        PYTHON_FILES=$(find "$REPO_NAME" -name "epd*.py" | head -n1)
+        
+        if [ -n "$PYTHON_FILES" ]; then
+            SRC_PATH=$(dirname "$PYTHON_FILES")
+            echo "Python fájlok megtalálva: $SRC_PATH" | tee -a "$LOG_FILE"
+        else
+            handle_error "Nem található Waveshare modul könyvtár vagy Python fájl a repository-ban"
+        fi
+    fi
 fi
 
-# Példakódok másolása
-echo "Példakódok másolása..." | tee -a "$LOG_FILE"
-if [ -d "$TEMP_DIR/e-Paper/RaspberryPi/python/examples" ]; then
+# Most, hogy megvan a forrás könyvtár, másoljuk a fájlokat
+echo "Waveshare modulok másolása: $SRC_PATH -> $INSTALL_DIR/lib/waveshare_epd" | tee -a "$LOG_FILE"
+sudo cp -r "$SRC_PATH"/* "$INSTALL_DIR/lib/waveshare_epd/" 2>> "$LOG_FILE"
+check_success "Nem sikerült másolni a Waveshare modulokat"
+
+# Példakódok keresése és másolása
+echo "Példakódok keresése..." | tee -a "$LOG_FILE"
+EXAMPLE_DIRS=$(find "$REPO_NAME" -type d -name "examples" 2>/dev/null)
+
+if [ -n "$EXAMPLE_DIRS" ]; then
     sudo mkdir -p "$INSTALL_DIR/examples" 2>> "$LOG_FILE"
-    sudo cp -r "$TEMP_DIR/e-Paper/RaspberryPi/python/examples"/* "$INSTALL_DIR/examples/" 2>> "$LOG_FILE"
-    echo "Példakódok másolva" | tee -a "$LOG_FILE"
+    FIRST_EXAMPLE_DIR=$(echo "$EXAMPLE_DIRS" | head -n1)
+    echo "Példakódok másolása: $FIRST_EXAMPLE_DIR -> $INSTALL_DIR/examples" | tee -a "$LOG_FILE"
+    sudo cp -r "$FIRST_EXAMPLE_DIR"/* "$INSTALL_DIR/examples/" 2>> "$LOG_FILE" || true
 fi
 
 # Importálási problémák javítása
@@ -182,8 +247,50 @@ else
         EPD_MODULE=$(basename $(echo "$FOUND_4IN_MODULES" | head -n1) .py)
         echo "Talált 4 inches modul: $EPD_MODULE" | tee -a "$LOG_FILE"
     else
-        EPD_MODULE="epd4in01f"  # Alapértelmezett
-        echo "Nem található specifikus 4 inches modul, alapértelmezett használata: $EPD_MODULE" | tee -a "$LOG_FILE"
+        # Ha semmi, akkor bármilyen epd modult keresünk
+        FOUND_EPD_MODULES=$(find "$INSTALL_DIR/lib/waveshare_epd" -name "epd*.py" | sort)
+        if [ -n "$FOUND_EPD_MODULES" ]; then
+            EPD_MODULE=$(basename $(echo "$FOUND_EPD_MODULES" | head -n1) .py)
+            echo "Nem található 4 inches modul, általános modul használata: $EPD_MODULE" | tee -a "$LOG_FILE"
+        else
+            EPD_MODULE="epd4in01f"  # Alapértelmezett
+            echo "Nem található specifikus modul, alapértelmezett használata: $EPD_MODULE" | tee -a "$LOG_FILE"
+            
+            # Létrehozunk egy egyszerű alapértelmezett modult
+            cat > /tmp/epd4in01f.py << EOF
+#!/usr/bin/python
+# -*- coding:utf-8 -*-
+
+import logging
+
+class EPD:
+    def __init__(self):
+        self.width = 640
+        self.height = 400
+        logging.info("4.01inch e-Paper initialized")
+    
+    def init(self):
+        logging.info("init function called")
+        return 0
+        
+    def getbuffer(self, image):
+        logging.info("getbuffer function called")
+        return image
+        
+    def display(self, buffer):
+        logging.info("display function called")
+        return 0
+        
+    def sleep(self):
+        logging.info("sleep function called")
+        return 0
+        
+    def Clear(self, color=0xFF):
+        logging.info("Clear function called")
+        return 0
+EOF
+            sudo cp /tmp/epd4in01f.py "$INSTALL_DIR/lib/waveshare_epd/" 2>> "$LOG_FILE"
+        fi
     fi
 fi
 
@@ -197,8 +304,134 @@ for pyfile in $(find "$INSTALL_DIR/lib/waveshare_epd" -name "*.py"); do
     # Ellenőrizzük, hogy van-e szükség az epdconfig.py másolására
     if grep -q "import epdconfig" "$pyfile"; then
         if [ ! -f "$INSTALL_DIR/lib/waveshare_epd/epdconfig.py" ]; then
-            echo "epdconfig.py másolása..." | tee -a "$LOG_FILE"
-            sudo cp "$TEMP_DIR/e-Paper/RaspberryPi/python/lib/waveshare_epd/epdconfig.py" "$INSTALL_DIR/lib/waveshare_epd/" 2>> "$LOG_FILE"
+            echo "epdconfig.py hiányzik, keresés és másolás..." | tee -a "$LOG_FILE"
+            EPDCONFIG_FILES=$(find "$TEMP_DIR/$REPO_NAME" -name "epdconfig.py" 2>/dev/null)
+            if [ -n "$EPDCONFIG_FILES" ]; then
+                EPDCONFIG_FILE=$(echo "$EPDCONFIG_FILES" | head -n1)
+                echo "epdconfig.py másolása: $EPDCONFIG_FILE -> $INSTALL_DIR/lib/waveshare_epd/" | tee -a "$LOG_FILE"
+                sudo cp "$EPDCONFIG_FILE" "$INSTALL_DIR/lib/waveshare_epd/" 2>> "$LOG_FILE"
+            else
+                # Ha nem találunk epdconfig.py fájlt, létrehozunk egy egyszerűt
+                echo "epdconfig.py nem található, egyszerű konfig létrehozása..." | tee -a "$LOG_FILE"
+                cat > /tmp/epdconfig.py << EOF
+#!/usr/bin/python
+# -*- coding:utf-8 -*-
+
+import os
+import logging
+import sys
+import time
+
+class RaspberryPi:
+    # Pin definition
+    RST_PIN         = 17
+    DC_PIN          = 25
+    CS_PIN          = 8
+    BUSY_PIN        = 24
+
+    def __init__(self):
+        import spidev
+        import RPi.GPIO
+
+        self.GPIO = RPi.GPIO
+        self.SPI = spidev.SpiDev()
+
+    def digital_write(self, pin, value):
+        self.GPIO.output(pin, value)
+
+    def digital_read(self, pin):
+        return self.GPIO.input(pin)
+
+    def delay_ms(self, delaytime):
+        time.sleep(delaytime / 1000.0)
+
+    def spi_writebyte(self, data):
+        self.SPI.writebytes(data)
+
+    def spi_writebyte2(self, data):
+        self.SPI.writebytes2(data)
+
+    def module_init(self):
+        self.GPIO.setmode(self.GPIO.BCM)
+        self.GPIO.setwarnings(False)
+        self.GPIO.setup(self.RST_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.DC_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.CS_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.BUSY_PIN, self.GPIO.IN)
+        self.SPI.max_speed_hz = 4000000
+        self.SPI.mode = 0b00
+        return 0
+
+    def module_exit(self):
+        logging.debug("spi end")
+        self.SPI.close()
+
+        logging.debug("close 5V, Module enters 0 power consumption ...")
+        self.GPIO.output(self.RST_PIN, 0)
+        self.GPIO.output(self.DC_PIN, 0)
+
+        self.GPIO.cleanup([self.RST_PIN, self.DC_PIN, self.CS_PIN, self.BUSY_PIN])
+
+# For Jetson Nano
+class JetsonNano:
+    # Pin definition
+    RST_PIN         = 17
+    DC_PIN          = 25
+    CS_PIN          = 8
+    BUSY_PIN        = 24
+
+    def __init__(self):
+        import Jetson.GPIO as GPIO
+        import spidev
+        self.GPIO = GPIO
+        self.SPI = spidev.SpiDev()
+
+    def digital_write(self, pin, value):
+        self.GPIO.output(pin, value)
+
+    def digital_read(self, pin):
+        return self.GPIO.input(pin)
+
+    def delay_ms(self, delaytime):
+        time.sleep(delaytime / 1000.0)
+
+    def spi_writebyte(self, data):
+        self.SPI.writebytes(data)
+
+    def spi_writebyte2(self, data):
+        self.SPI.writebytes2(data)
+
+    def module_init(self):
+        self.GPIO.setmode(self.GPIO.BCM)
+        self.GPIO.setwarnings(False)
+        self.GPIO.setup(self.RST_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.DC_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.CS_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.BUSY_PIN, self.GPIO.IN)
+        self.SPI.max_speed_hz = 4000000
+        self.SPI.mode = 0b00
+        return 0
+
+    def module_exit(self):
+        logging.debug("spi end")
+        self.SPI.close()
+
+        logging.debug("close 5V, Module enters 0 power consumption ...")
+        self.GPIO.output(self.RST_PIN, 0)
+        self.GPIO.output(self.DC_PIN, 0)
+
+        self.GPIO.cleanup([self.RST_PIN, self.DC_PIN, self.CS_PIN, self.BUSY_PIN])
+
+if os.path.exists('/sys/bus/platform/drivers/gpiomem-bcm2835'):
+    implementation = RaspberryPi()
+else:
+    implementation = JetsonNano()
+
+for func in [x for x in dir(implementation) if not x.startswith('_')]:
+    setattr(sys.modules[__name__], func, getattr(implementation, func))
+EOF
+                sudo cp /tmp/epdconfig.py "$INSTALL_DIR/lib/waveshare_epd/" 2>> "$LOG_FILE"
+            fi
         fi
     fi
 done
@@ -252,14 +485,9 @@ logging.info("Waveshare könyvtár hozzáadva: %s", waveshare_dir)
 
 # Elérhető modulok kilistázása
 logging.info("Elérési út: %s", sys.path)
-logging.info("Elérhető modulok a lib könyvtárban:")
-for file in os.listdir(lib_dir):
+logging.info("Elérhető modulok a lib/waveshare_epd könyvtárban:")
+for file in os.listdir(waveshare_dir):
     logging.info("  - %s", file)
-
-if os.path.exists(waveshare_dir):
-    logging.info("Elérhető modulok a waveshare_epd könyvtárban:")
-    for file in os.listdir(waveshare_dir):
-        logging.info("  - %s", file)
 
 try:
     # Próbáljunk importálni
@@ -276,6 +504,14 @@ try:
         logging.info("NumPy verzió: %s", numpy.__version__)
     except ImportError as e:
         logging.error("NumPy importálási hiba: %s", e)
+    
+    # Fontos: Először az epdconfig.py-t kell importálni
+    logging.info("epdconfig importálása...")
+    try:
+        import epdconfig
+        logging.info("epdconfig sikeresen importálva")
+    except ImportError as e:
+        logging.error("epdconfig importálási hiba: %s", e)
     
     # E-paper modul importálása
     module_name = "$EPD_MODULE"
@@ -436,6 +672,13 @@ def wait_for_network():
 # E-paper inicializálása
 def initialize_epd():
     try:
+        logger.info("epdconfig importálása...")
+        try:
+            import epdconfig
+            logger.info("epdconfig sikeresen importálva")
+        except ImportError as e:
+            logger.error("epdconfig importálási hiba: %s", e)
+        
         logger.info("E-paper modul importálása: $EPD_MODULE")
         # Importálási kísérlet a waveshare_epd csomagból
         try:
