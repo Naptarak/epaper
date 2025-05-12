@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# install.sh - Dinamikus felhasználó-azonosítással javított telepítő szkript
+# install.sh - Átdolgozott telepítő szkript
 # Raspberry Pi + Waveshare 4.01 inch HAT (F) 7 színű e-paper kijelzőhöz
-# Frissítve: 2025.05.12 - Pillow és NumPy telepítési probléma javítva
+# Frissítve: 2025.05.13 - Importálási hibák és kijelző inicializálási problémák javítva
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="install_log.txt"
 echo "Telepítés indítása: $(date)" | tee -a "$LOG_FILE"
 
-# Aktuális felhasználó azonosítása a pi helyett
+# Aktuális felhasználó azonosítása
 CURRENT_USER=$(whoami)
 echo "Aktuális felhasználó: $CURRENT_USER" | tee -a "$LOG_FILE"
 
@@ -62,8 +62,14 @@ check_success "Nem sikerült telepíteni a python3-venv csomagot"
 # Alapvető rendszercsomagok telepítése
 echo "Alapvető rendszercsomagok telepítése..." | tee -a "$LOG_FILE"
 sudo apt-get install -y git xvfb scrot 2>> "$LOG_FILE" || true
-# Python-GPIO és SPI modulok telepítése APT-tal
+
+# SPI és GPIO modulok telepítése
+echo "SPI és GPIO modulok telepítése..." | tee -a "$LOG_FILE"
 sudo apt-get install -y python3-rpi.gpio python3-spidev 2>> "$LOG_FILE" || true
+
+# Pillow függőségek telepítése
+echo "Pillow függőségek telepítése..." | tee -a "$LOG_FILE"
+sudo apt-get install -y python3-pil python3-pil.imagetk libjpeg-dev zlib1g-dev libfreetype6-dev liblcms2-dev libwebp-dev 2>> "$LOG_FILE" || true
 
 # Weboldal capture eszközök telepítése
 echo "Weboldal megjelenítéshez szükséges eszközök telepítése..." | tee -a "$LOG_FILE"
@@ -84,101 +90,25 @@ sudo chown -R $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR" 2>> "$LOG_FILE"
 check_success "Nem sikerült beállítani a jogosultságokat"
 
 # Python függőségek telepítése a virtuális környezetbe
-echo "Python függőségek telepítése a virtuális környezetbe (ez eltarthat egy ideig)..." | tee -a "$LOG_FILE"
+echo "Python függőségek telepítése a virtuális környezetbe..." | tee -a "$LOG_FILE"
 "$VENV_DIR/bin/pip" install --upgrade pip 2>> "$LOG_FILE"
 check_success "Nem sikerült frissíteni a pip-et"
 
-echo "RPi.GPIO telepítése..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install RPi.GPIO 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni az RPi.GPIO modult"
+# Rendszerszintű Pillow és NumPy telepítése
+echo "Rendszerszintű Pillow és NumPy telepítése..." | tee -a "$LOG_FILE"
+sudo apt-get install -y python3-pil python3-numpy 2>> "$LOG_FILE"
 
-echo "spidev telepítése..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install spidev 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni a spidev modult"
+# Virtuális környezetbe is telepítjük a PIL-t és NumPy-t
+echo "Pillow és NumPy telepítése a virtuális környezetbe..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install Pillow numpy 2>> "$LOG_FILE" || true
 
-# Pillow telepítéséhez szükséges rendszerfüggőségek telepítése
-echo "Pillow függőségek telepítése..." | tee -a "$LOG_FILE"
-sudo apt-get install -y python3-pil python3-pil.imagetk libjpeg-dev zlib1g-dev libfreetype6-dev liblcms2-dev libwebp-dev tcl8.6-dev tk8.6-dev python3-tk libharfbuzz-dev libfribidi-dev libxcb1-dev 2>> "$LOG_FILE" || true
+# RPI.GPIO és spidev telepítése a virtuális környezetbe
+echo "RPI.GPIO és spidev telepítése a virtuális környezetbe..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install RPi.GPIO spidev 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni az RPi.GPIO és spidev modulokat"
 
-# Először rendszerszintű Pillow telepítése APT-vel
-echo "Rendszerszintű Pillow telepítése (ajánlott mód)..." | tee -a "$LOG_FILE"
-sudo apt-get install -y python3-pil 2>> "$LOG_FILE"
-
-# Próbáljuk a Pillow-t előre fordított kerékkel telepíteni
-echo "Pillow telepítése előre fordított kerékkel (ez stabilabb, mint a build)..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install --only-binary=:all: Pillow 2>> "$LOG_FILE" || true
-
-# Ha még mindig nincs telepítve, akkor próbáljuk fordítás nélkül
-if ! "$VENV_DIR/bin/pip" show Pillow >/dev/null 2>&1; then
-    echo "Pillow telepítése sikertelen volt az előző módszerekkel, alternatív telepítési kísérlet..." | tee -a "$LOG_FILE"
-    
-    # Próbálkozás régebbi verzióval
-    echo "Pillow régebbi verziójának telepítési kísérlete..." | tee -a "$LOG_FILE"
-    "$VENV_DIR/bin/pip" install --only-binary=:all: Pillow==9.0.0 2>> "$LOG_FILE" || true
-    
-    if ! "$VENV_DIR/bin/pip" show Pillow >/dev/null 2>&1; then
-        # Pillow linkek létrehozása a rendszer Pillow-ból
-        SYSTEM_PIL_PATH=$(python3 -c "import PIL; print(PIL.__path__[0])" 2>/dev/null || echo "")
-        if [ -n "$SYSTEM_PIL_PATH" ] && [ -d "$SYSTEM_PIL_PATH" ]; then
-            echo "Rendszer PIL modul megtalálva: $SYSTEM_PIL_PATH. Symlink létrehozása..." | tee -a "$LOG_FILE"
-            VENV_SITE_PACKAGES="$VENV_DIR/lib/python$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages"
-            sudo mkdir -p "$VENV_SITE_PACKAGES/PIL"
-            sudo ln -sf "$SYSTEM_PIL_PATH"/* "$VENV_SITE_PACKAGES/PIL/"
-            echo "PIL szimbolikus linkek létrehozva a virtuális környezetben" | tee -a "$LOG_FILE"
-        else
-            echo "FIGYELMEZTETÉS: Nem sikerült telepíteni a Pillow modult, a képek megjelenítése korlátozott lesz" | tee -a "$LOG_FILE"
-        fi
-    fi
-fi
-
-# Ellenőrizzük, hogy végül sikerült-e telepíteni a Pillow-t
-VENV_SITE_PACKAGES="$VENV_DIR/lib/python$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages"
-if "$VENV_DIR/bin/pip" show Pillow >/dev/null 2>&1 || [ -e "$VENV_SITE_PACKAGES/PIL" ]; then
-    echo "Pillow sikeresen telepítve vagy szimbolikus linkkel elérhető" | tee -a "$LOG_FILE"
-else
-    echo "FIGYELMEZTETÉS: Pillow nem elérhető, de a telepítés folytatódik" | tee -a "$LOG_FILE"
-fi
-
-# NumPy telepítése rendszercsomagként
-echo "NumPy telepítése rendszerszinten (ajánlott mód)..." | tee -a "$LOG_FILE"
-sudo apt-get install -y python3-numpy 2>> "$LOG_FILE"
-
-# Próbáljuk a NumPy-t előre fordított kerékkel telepíteni a virtuális környezetbe
-echo "NumPy telepítése előre fordított kerékkel..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install --only-binary=:all: numpy 2>> "$LOG_FILE" || true
-
-# Ha még mindig nincs telepítve, akkor próbáljuk a szimbolikus linkeket
-if ! "$VENV_DIR/bin/pip" show numpy >/dev/null 2>&1; then
-    echo "NumPy telepítése sikertelen volt az előző módszerekkel, alternatív telepítési kísérlet..." | tee -a "$LOG_FILE"
-    
-    # Próbálkozás régebbi verzióval
-    echo "NumPy régebbi verziójának telepítési kísérlete..." | tee -a "$LOG_FILE"
-    "$VENV_DIR/bin/pip" install --only-binary=:all: numpy==1.22.4 2>> "$LOG_FILE" || true
-    
-    if ! "$VENV_DIR/bin/pip" show numpy >/dev/null 2>&1; then
-        # NumPy linkek létrehozása a rendszer NumPy-ból
-        SYSTEM_NUMPY_PATH=$(python3 -c "import numpy; print(numpy.__path__[0])" 2>/dev/null || echo "")
-        if [ -n "$SYSTEM_NUMPY_PATH" ] && [ -d "$SYSTEM_NUMPY_PATH" ]; then
-            echo "Rendszer NumPy modul megtalálva: $SYSTEM_NUMPY_PATH. Symlink létrehozása..." | tee -a "$LOG_FILE"
-            VENV_SITE_PACKAGES="$VENV_DIR/lib/python$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages"
-            sudo mkdir -p "$VENV_SITE_PACKAGES/numpy"
-            sudo ln -sf "$SYSTEM_NUMPY_PATH"/* "$VENV_SITE_PACKAGES/numpy/"
-            echo "NumPy szimbolikus linkek létrehozva a virtuális környezetben" | tee -a "$LOG_FILE"
-        else
-            echo "FIGYELMEZTETÉS: Nem sikerült telepíteni a NumPy modult, bizonyos funkciók korlátozottak lehetnek" | tee -a "$LOG_FILE"
-        fi
-    fi
-fi
-
-# Ellenőrizzük, hogy végül sikerült-e telepíteni a NumPy-t
-if "$VENV_DIR/bin/pip" show numpy >/dev/null 2>&1 || [ -e "$VENV_SITE_PACKAGES/numpy" ]; then
-    echo "NumPy sikeresen telepítve vagy szimbolikus linkkel elérhető" | tee -a "$LOG_FILE"
-else
-    echo "FIGYELMEZTETÉS: NumPy nem elérhető, de a telepítés folytatódik" | tee -a "$LOG_FILE"
-fi
-
-# Waveshare e-paper könyvtár klónozása és felderítése
-echo "Waveshare e-paper könyvtár klónozása és felderítése..." | tee -a "$LOG_FILE"
+# Waveshare e-paper könyvtár letöltése és telepítése
+echo "Waveshare e-paper könyvtár letöltése..." | tee -a "$LOG_FILE"
 TEMP_DIR="/tmp/waveshare-install"
 mkdir -p "$TEMP_DIR"
 cd "$TEMP_DIR"
@@ -186,106 +116,65 @@ cd "$TEMP_DIR"
 # Régi könyvtárak eltávolítása
 rm -rf e-Paper epd-library-python 2>/dev/null || true
 
-# Waveshare official repo klónozása
-echo "Hivatalos Waveshare repository klónozása..." | tee -a "$LOG_FILE"
-if ! git clone https://github.com/waveshare/e-Paper.git 2>> "$LOG_FILE"; then
-    echo "Hivatalos repo klónozás sikertelen, próbálkozás az alternatív repoval..." | tee -a "$LOG_FILE"
-    if ! git clone https://github.com/soonuse/epd-library-python.git 2>> "$LOG_FILE"; then
-        handle_error "Nem sikerült klónozni az e-paper könyvtárat. Ellenőrizd az internetkapcsolatot."
+# Waveshare könyvtár klónozása
+echo "Waveshare repository klónozása..." | tee -a "$LOG_FILE"
+git clone https://github.com/waveshare/e-Paper.git 2>> "$LOG_FILE"
+check_success "Nem sikerült klónozni a Waveshare repository-t"
+
+# E-paper modul könyvtárszerkezet létrehozása
+echo "E-paper könyvtárszerkezet létrehozása..." | tee -a "$LOG_FILE"
+sudo mkdir -p "$INSTALL_DIR/lib/waveshare_epd" 2>> "$LOG_FILE"
+
+# __init__.py létrehozása, hogy proper Python csomag legyen
+echo "Python csomag inicializálása..." | tee -a "$LOG_FILE"
+sudo touch "$INSTALL_DIR/lib/waveshare_epd/__init__.py" 2>> "$LOG_FILE"
+sudo touch "$INSTALL_DIR/lib/__init__.py" 2>> "$LOG_FILE"
+
+# E-paper modul másolása
+echo "E-paper modulok másolása..." | tee -a "$LOG_FILE"
+if [ -d "$TEMP_DIR/e-Paper/RaspberryPi/python/lib/waveshare_epd" ]; then
+    sudo cp -r "$TEMP_DIR/e-Paper/RaspberryPi/python/lib/waveshare_epd"/* "$INSTALL_DIR/lib/waveshare_epd/" 2>> "$LOG_FILE"
+    check_success "Nem sikerült másolni a waveshare_epd modulokat"
+else
+    handle_error "Nem található a Waveshare e-paper modul könyvtára"
+fi
+
+# Példakódok másolása
+echo "Példakódok másolása..." | tee -a "$LOG_FILE"
+if [ -d "$TEMP_DIR/e-Paper/RaspberryPi/python/examples" ]; then
+    sudo mkdir -p "$INSTALL_DIR/examples" 2>> "$LOG_FILE"
+    sudo cp -r "$TEMP_DIR/e-Paper/RaspberryPi/python/examples"/* "$INSTALL_DIR/examples/" 2>> "$LOG_FILE"
+    echo "Példakódok másolva" | tee -a "$LOG_FILE"
+fi
+
+# Importálási problémák javítása
+echo "Importálási problémák javítása..." | tee -a "$LOG_FILE"
+# Ellenőrzés, hogy melyik 4.01 inch modul van jelen
+if [ -f "$INSTALL_DIR/lib/waveshare_epd/epd4in01f.py" ]; then
+    EPD_MODULE="epd4in01f"
+elif [ -f "$INSTALL_DIR/lib/waveshare_epd/epd4in01.py" ]; then
+    EPD_MODULE="epd4in01"
+else
+    # Keressünk bármilyen 4 inch modult
+    FOUND_4IN_MODULES=$(find "$INSTALL_DIR/lib/waveshare_epd" -name "*4in*.py" | sort)
+    if [ -n "$FOUND_4IN_MODULES" ]; then
+        # Vesszük az első találatot
+        EPD_MODULE=$(basename $(echo "$FOUND_4IN_MODULES" | head -n1) .py)
+        echo "Talált 4 inches modul: $EPD_MODULE" | tee -a "$LOG_FILE"
     else
-        REPO_NAME="epd-library-python"
-        echo "Alternatív repo klónozva: $REPO_NAME" | tee -a "$LOG_FILE"
+        EPD_MODULE="epd4in01f"  # Alapértelmezett
+        echo "Nem található specifikus 4 inches modul, alapértelmezett használata: $EPD_MODULE" | tee -a "$LOG_FILE"
     fi
-else
-    REPO_NAME="e-Paper"
-    echo "Hivatalos repo klónozva: $REPO_NAME" | tee -a "$LOG_FILE"
 fi
 
-# Könyvtárszerkezet felderítése és mentése
-echo "Repository könyvtárszerkezet feltérképezése..." | tee -a "$LOG_FILE"
-find "$REPO_NAME" -type d | sort > "$TEMP_DIR/dir_structure.txt"
-cat "$TEMP_DIR/dir_structure.txt" | tee -a "$LOG_FILE"
+echo "Használt e-paper modul: $EPD_MODULE" | tee -a "$LOG_FILE"
 
-# Python fájlok keresése, különös tekintettel a 4in01f vagy 4_01f fájlokra
-echo "4in01f modul keresése a repository-ban..." | tee -a "$LOG_FILE"
-FOUND_MODULES=$(find "$REPO_NAME" -name "*4in01f*.py" -o -name "*4_01f*.py" 2>/dev/null)
-if [ -z "$FOUND_MODULES" ]; then
-    echo "Nem találtam specifikus 4.01 inch modulfájlt, általános e-paper modulok keresése..." | tee -a "$LOG_FILE"
-    FOUND_MODULES=$(find "$REPO_NAME" -name "epd*.py" 2>/dev/null)
-fi
-
-# Eredmények kiírása
-echo "Talált modulok:" | tee -a "$LOG_FILE"
-echo "$FOUND_MODULES" | tee -a "$LOG_FILE"
-
-# Potenciális forrásmappák azonosítása
-if [ -d "$REPO_NAME/RaspberryPi" ]; then
-    # Régebbi Waveshare repo struktúra
-    POTENTIAL_DIRS=(
-        "$REPO_NAME/RaspberryPi/python/examples"
-        "$REPO_NAME/RaspberryPi/python"
-        "$REPO_NAME/RaspberryPi"
-    )
-elif [ -d "$REPO_NAME/python" ]; then
-    # Újabb Waveshare repo struktúra
-    POTENTIAL_DIRS=(
-        "$REPO_NAME/python/examples"
-        "$REPO_NAME/python"
-    )
-else
-    # Egyéb lehetséges struktúrák
-    POTENTIAL_DIRS=(
-        "$(dirname $(echo "$FOUND_MODULES" | head -n1))"
-        "$REPO_NAME"
-    )
-fi
-
-# Ellenőrizzük és találjuk meg a legjobb forrásmappát
-LIB_SRC_DIR=""
-for dir in "${POTENTIAL_DIRS[@]}"; do
-    if [ -d "$dir" ]; then
-        echo "Potenciális forrásmappa: $dir" | tee -a "$LOG_FILE"
-        if [ -d "$dir/waveshare_epd" ] || ls "$dir"/*epd*.py >/dev/null 2>&1; then
-            echo "Megfelelő forrásmappa megtalálva: $dir" | tee -a "$LOG_FILE"
-            LIB_SRC_DIR="$dir"
-            break
-        fi
-    fi
+# Relatív importok javítása
+echo "Relatív importok javítása a modul fájlokban..." | tee -a "$LOG_FILE"
+for pyfile in $(find "$INSTALL_DIR/lib/waveshare_epd" -name "*.py"); do
+    # Relatív importok cseréje abszolút importokra
+    sudo sed -i 's/from \. import epdconfig/import epdconfig/g' "$pyfile" 2>> "$LOG_FILE"
 done
-
-# Ha még mindig nem találtunk megfelelő forrást, használjuk az első talált modult
-if [ -z "$LIB_SRC_DIR" ] && [ -n "$FOUND_MODULES" ]; then
-    LIB_SRC_DIR=$(dirname $(echo "$FOUND_MODULES" | head -n1))
-    echo "Alapértelmezett forráskönyvtár: $LIB_SRC_DIR" | tee -a "$LOG_FILE"
-fi
-
-# Ha még mindig nincs érvényes forráskönyvtár, hiba
-if [ -z "$LIB_SRC_DIR" ] || [ ! -d "$LIB_SRC_DIR" ]; then
-    handle_error "Nem sikerült azonosítani érvényes forráskönyvtárat a Waveshare repository-ban"
-fi
-
-# Megállapítjuk a relatív útvonalat a repository gyökeréhez képest
-RELATIVE_PATH=${LIB_SRC_DIR#$TEMP_DIR/}
-echo "Relatív útvonal: $RELATIVE_PATH" | tee -a "$LOG_FILE"
-
-# Könyvtárstruktúra másolása a telepítési könyvtárba
-echo "Forrásmappa másolása a telepítési könyvtárba..." | tee -a "$LOG_FILE"
-sudo mkdir -p "$INSTALL_DIR/lib" 2>> "$LOG_FILE"
-sudo cp -r "$LIB_SRC_DIR"/* "$INSTALL_DIR/lib/" 2>> "$LOG_FILE"
-check_success "Nem sikerült másolni a forrásfájlokat"
-
-# Recursively copy all python files if they weren't copied already
-echo "Python fájlok másolásának ellenőrzése..." | tee -a "$LOG_FILE"
-if ! ls "$INSTALL_DIR/lib"/*epd*.py >/dev/null 2>&1 && ! [ -d "$INSTALL_DIR/lib/waveshare_epd" ]; then
-    echo "Nem találtam e-paper modulokat a célkönyvtárban, további fájlok keresése..." | tee -a "$LOG_FILE"
-    for py_file in $(find "$TEMP_DIR/$REPO_NAME" -name "*.py"); do
-        rel_path=${py_file#$TEMP_DIR/$REPO_NAME/}
-        target_dir=$(dirname "$INSTALL_DIR/lib/$rel_path")
-        sudo mkdir -p "$target_dir" 2>> "$LOG_FILE"
-        sudo cp "$py_file" "$target_dir/" 2>> "$LOG_FILE"
-    done
-    echo "Python fájlok másolva" | tee -a "$LOG_FILE"
-fi
 
 # SPI interfész engedélyezése
 echo "SPI interfész engedélyezése..." | tee -a "$LOG_FILE"
@@ -300,73 +189,131 @@ else
     REBOOT_REQUIRED=false
 fi
 
-# E-paper modul detektálása a telepített fájlok között
-echo "E-paper modulok keresése a telepített fájlok között..." | tee -a "$LOG_FILE"
-INSTALLED_MODULES=$(find "$INSTALL_DIR/lib" -name "*4in01f*.py" -o -name "*4_01f*.py" 2>/dev/null)
-if [ -z "$INSTALLED_MODULES" ]; then
-    echo "Specifikus modul nem található, általános e-paper modulok keresése..." | tee -a "$LOG_FILE"
-    INSTALLED_MODULES=$(find "$INSTALL_DIR/lib" -name "epd*.py" 2>/dev/null)
-fi
-
-echo "Telepített modulok:" | tee -a "$LOG_FILE"
-echo "$INSTALLED_MODULES" | tee -a "$LOG_FILE"
-
-# Modul és útvonal meghatározása
-if [ -n "$INSTALLED_MODULES" ]; then
-    EPD_MODULE_PATH=$(dirname $(echo "$INSTALLED_MODULES" | head -n1))
-    EPD_MODULE=$(basename $(echo "$INSTALLED_MODULES" | head -n1) .py)
-    echo "Használt modul: $EPD_MODULE ($EPD_MODULE_PATH)" | tee -a "$LOG_FILE"
-else
-    echo "Nem találtam használható modult, alapértelmezett beállítások használata" | tee -a "$LOG_FILE"
-    EPD_MODULE="epd4in01f"
-    
-    # Próbáljuk meghatározni a modul helyét
-    if [ -d "$INSTALL_DIR/lib/waveshare_epd" ]; then
-        EPD_MODULE_PATH="$INSTALL_DIR/lib/waveshare_epd"
-    else
-        EPD_MODULE_PATH="$INSTALL_DIR/lib"
-    fi
-    echo "Alapértelmezett modul: $EPD_MODULE ($EPD_MODULE_PATH)" | tee -a "$LOG_FILE"
-    
-    # Egyszerű teszt modul létrehozása, ha nem találtunk megfelelőt
-    if [ ! -f "$EPD_MODULE_PATH/${EPD_MODULE}.py" ]; then
-        echo "Modul nem található, egyszerű teszt modul létrehozása..." | tee -a "$LOG_FILE"
-        sudo mkdir -p "$EPD_MODULE_PATH" 2>> "$LOG_FILE"
-        cat > /tmp/epd_test.py << EOF
-#!/usr/bin/python
+# Teszt szkript létrehozása
+echo "Teszt szkript létrehozása a kijelző működésének ellenőrzéséhez..." | tee -a "$LOG_FILE"
+cat > "$INSTALL_DIR/test_display.py" << EOF
+#!/usr/bin/env python3
 # -*- coding:utf-8 -*-
 
+import os
+import sys
+import time
 import logging
+from PIL import Image, ImageDraw, ImageFont
 
-class EPD:
-    def __init__(self):
-        self.width = 640
-        self.height = 400
-        logging.info("4.01inch e-Paper initialized")
+# Logging beállítása
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('/var/log/epaper-test.log')
+    ]
+)
+
+logging.info("E-Paper teszt program indítása")
+logging.info("Python verzió: %s", sys.version)
+
+# Elérési útvonal beállítása
+lib_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
+sys.path.append(lib_dir)
+logging.info("Lib könyvtár hozzáadva: %s", lib_dir)
+
+waveshare_dir = os.path.join(lib_dir, 'waveshare_epd')
+sys.path.append(waveshare_dir)
+logging.info("Waveshare könyvtár hozzáadva: %s", waveshare_dir)
+
+# Elérhető modulok kilistázása
+logging.info("Elérhető modulok a lib könyvtárban:")
+for file in os.listdir(lib_dir):
+    logging.info("  - %s", file)
+
+if os.path.exists(waveshare_dir):
+    logging.info("Elérhető modulok a waveshare_epd könyvtárban:")
+    for file in os.listdir(waveshare_dir):
+        logging.info("  - %s", file)
+
+try:
+    # Próbálunk importálni különböző képernyő modulokat
+    module_name = "$EPD_MODULE"
+    logging.info("Megpróbáljuk importálni a modult: %s", module_name)
     
-    def init(self):
-        logging.info("init function called")
-        return 0
-        
-    def getbuffer(self, image):
-        logging.info("getbuffer function called")
-        return [0x00] * (self.width * self.height // 8)
-        
-    def display(self, buffer):
-        logging.info("display function called")
-        return 0
-        
-    def sleep(self):
-        logging.info("sleep function called")
-        return 0
+    try:
+        from waveshare_epd import $EPD_MODULE
+        logging.info("Modul sikeresen importálva a waveshare_epd csomagból")
+        epd = $EPD_MODULE.EPD()
+    except ImportError:
+        logging.warning("Nem sikerült importálni a waveshare_epd csomagból, direkt import próbálása")
+        sys.path.append('/opt/epaper-display/lib/waveshare_epd')
+        import $EPD_MODULE
+        epd = $EPD_MODULE.EPD()
+    
+    logging.info("EPD objektum létrehozva")
+    logging.info("Kijelző méretei: %s x %s", epd.width, epd.height)
+    
+    # Kijelző inicializálása
+    logging.info("Kijelző inicializálása...")
+    epd.init()
+    logging.info("Inicializálás sikeres")
+    
+    # Kijelző törlése
+    logging.info("Kijelző törlése...")
+    epd.Clear()
+    logging.info("Kijelző törölve")
+    
+    # Teszt kép rajzolása
+    logging.info("Teszt kép létrehozása...")
+    image = Image.new('RGB', (epd.width, epd.height), 'white')
+    draw = ImageDraw.Draw(image)
+    
+    # Betűtípus betöltése
+    font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+    if os.path.exists(font_path):
+        font_large = ImageFont.truetype(font_path, 40)
+        font_small = ImageFont.truetype(font_path, 24)
+    else:
+        # Ha nincs betűtípus, használjuk az alapértelmezettet
+        font_large = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+    
+    # Szöveg kirajzolása
+    draw.text((50, 50), 'E-Paper teszt', fill='black', font=font_large)
+    draw.text((50, 120), 'Sikeres inicializálás!', fill='red', font=font_small)
+    draw.text((50, 190), 'Modul: $EPD_MODULE', fill='black', font=font_small)
+    draw.text((50, 250), 'Telepítés dátuma:', fill='black', font=font_small)
+    draw.text((50, 290), '$(date +%Y-%m-%d)', fill='red', font=font_small)
+    
+    # Kép megjelenítése
+    logging.info("Kép megjelenítése a kijelzőn...")
+    epd.display(epd.getbuffer(image))
+    logging.info("Kép megjelenítve")
+    
+    # Alvó mód
+    logging.info("Kijelző alvó módba helyezése...")
+    epd.sleep()
+    logging.info("Kijelző alvó módban")
+    
+    logging.info("Teszt sikeresen befejezve.")
+    print("Teszt sikeresen befejezve. Ellenőrizd a kijelzőt!")
+    
+except ImportError as e:
+    logging.error("Importálási hiba: %s", e)
+    print(f"Importálási hiba: {e}")
+    print("Ellenőrizd a log fájlt: /var/log/epaper-test.log")
+    sys.exit(1)
+except Exception as e:
+    logging.error("Hiba történt: %s", e, exc_info=True)
+    print(f"Hiba történt: {e}")
+    print("Ellenőrizd a log fájlt: /var/log/epaper-test.log")
+    sys.exit(1)
 EOF
-        sudo mv /tmp/epd_test.py "$EPD_MODULE_PATH/${EPD_MODULE}.py" 2>> "$LOG_FILE"
-        check_success "Nem sikerült létrehozni a teszt modult"
-    fi
-fi
 
-# Python szkript létrehozása a weboldal e-paper kijelzőn való megjelenítéséhez
-echo "Python szkript létrehozása a weboldal e-paper kijelzőn való megjelenítéséhez..." | tee -a "$LOG_FILE"
+# Teszt szkript futtathatóvá tétele
+sudo chmod +x "$INSTALL_DIR/test_display.py"
+sudo sed -i "1s|.*|#!$VENV_DIR/bin/python3|" "$INSTALL_DIR/test_display.py"
+
+# Python szkript létrehozása a weboldal megjelenítéséhez
+echo "Weboldal megjelenítő szkript létrehozása..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/display_webpage.py" << EOF
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
@@ -375,14 +322,14 @@ import os
 import sys
 import time
 import subprocess
-from PIL import Image
 import logging
-import importlib.util
+import traceback
+from PIL import Image, ImageDraw, ImageFont
 
 # Logging beállítása
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("/var/log/epaper-display.log"),
         logging.StreamHandler()
@@ -390,20 +337,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger('epaper-display')
 
-# E-paper könyvtár hozzáadása az elérési úthoz
-sys.path.append('$INSTALL_DIR/lib')
-sys.path.append('$INSTALL_DIR/lib/python') if os.path.exists('$INSTALL_DIR/lib/python') else None
-sys.path.append('$EPD_MODULE_PATH')
+# Elérési útvonalak beállítása
+lib_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'lib')
+sys.path.append(lib_dir)
+logger.info("Lib könyvtár hozzáadva: %s", lib_dir)
 
-# Az EPD modul könyvtárának azonosítása (waveshare_epd vagy közvetlenül)
-if os.path.exists('$EPD_MODULE_PATH/waveshare_epd'):
-    epd_module_dir = 'waveshare_epd'
-elif os.path.basename('$EPD_MODULE_PATH') == 'waveshare_epd':
-    epd_module_dir = ''
-else:
-    epd_module_dir = ''
+waveshare_dir = os.path.join(lib_dir, 'waveshare_epd')
+sys.path.append(waveshare_dir)
+logger.info("Waveshare könyvtár hozzáadva: %s", waveshare_dir)
 
-# Várakozás boot során a hálózat elérhetőségéig
+# Weboldal URL meghatározása
+WEBPAGE_URL = "http://example.com"  # Cseréld ki a kívánt URL-re
+
+# Várakozás a hálózati kapcsolatra
 def wait_for_network():
     max_attempts = 30  # Max 5 perc (30 * 10 másodperc)
     attempts = 0
@@ -431,106 +377,70 @@ def wait_for_network():
     logger.error("Nem sikerült kapcsolódni a hálózathoz az időkorláton belül")
     return False
 
-# E-paper modul inicializálása több próbálkozással
+# E-paper inicializálása
 def initialize_epd():
-    max_attempts = 5
-    attempts = 0
-    
-    logger.info("Összes elérhető útvonal: %s", sys.path)
-    logger.info("E-paper modul: $EPD_MODULE")
-    logger.info("E-paper modul útvonal: $EPD_MODULE_PATH")
-    logger.info("Modul könyvtár: %s", epd_module_dir)
-    
-    while attempts < max_attempts:
+    try:
+        logger.info("E-paper modul importálása: $EPD_MODULE")
+        # Importálási kísérlet a waveshare_epd csomagból
         try:
-            # Megpróbáljuk különböző módokon importálni a modult
-            if epd_module_dir:
-                module_import_str = f"{epd_module_dir}.$EPD_MODULE" if epd_module_dir else "$EPD_MODULE"
-                import_cmd = f"from {module_import_str} import EPD"
-                logger.info(f"Import parancs: {import_cmd}")
-                try:
-                    namespace = {}
-                    exec(import_cmd, namespace)
-                    epd_class = namespace['EPD']
-                    logger.info("Modul sikeresen importálva: %s", module_import_str)
-                except Exception as e1:
-                    logger.warning(f"Hiba az importáláskor: {e1}")
-                    try:
-                        # Alternatív módszer - közvetlen importálás
-                        import_path = os.path.join('$EPD_MODULE_PATH', '$EPD_MODULE.py')
-                        logger.info(f"Alternatív import útvonal: {import_path}")
-                        
-                        spec = importlib.util.spec_from_file_location("$EPD_MODULE", import_path)
-                        module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(module)
-                        epd_class = module.EPD
-                        logger.info("Modul sikeresen importálva fájlból")
-                    except Exception as e2:
-                        logger.error(f"Hiba az alternatív importáláskor: {e2}")
-                        raise ImportError("Nem sikerült importálni az e-paper modult")
-            else:
-                # Közvetlenül próbáljuk meg importálni
-                sys.path.append('$EPD_MODULE_PATH')
-                from $EPD_MODULE import EPD
-                epd_class = EPD
-                logger.info("Modul közvetlenül importálva: $EPD_MODULE")
-            
-            # E-paper kijelző inicializálása
-            epd = epd_class()
-            logger.info("EPD objektum létrehozva, inicializálás...")
-            epd.init()
-            logger.info("EPD inicializálás sikeres")
-            return epd
-            
-        except Exception as e:
-            attempts += 1
-            logger.error(f"Hiba a kijelző inicializálásakor (Próbálkozás {attempts}/{max_attempts}): {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            
-            if attempts < max_attempts:
-                logger.info(f"Újrapróbálkozás {5} másodperc múlva...")
-                time.sleep(5)
-    
-    logger.error("Nem sikerült inicializálni a kijelzőt több próbálkozás után sem")
-    
-    # Szimulációs mód, ha nem sikerült inicializálni
-    logger.warning("Szimulációs mód aktiválása...")
-    
-    class SimulatedEPD:
-        def __init__(self):
-            self.width = 640
-            self.height = 400
-            logger.info("Szimulált e-Paper inicializálva")
+            from waveshare_epd import $EPD_MODULE
+            logger.info("Modul sikeresen importálva a waveshare_epd csomagból")
+            epd = $EPD_MODULE.EPD()
+        except ImportError as e:
+            logger.warning(f"Nem sikerült importálni a waveshare_epd csomagból: {e}")
+            logger.warning("Direkt importálási kísérlet...")
+            # Ha nem sikerült, próbáljunk közvetlen importálást
+            import $EPD_MODULE
+            epd = $EPD_MODULE.EPD()
         
-        def init(self):
-            logger.info("Szimulált init hívás")
-            return 0
+        logger.info("EPD objektum létrehozva")
+        logger.info("Kijelző méretei: %s x %s", epd.width, epd.height)
+        
+        # Inicializálás
+        logger.info("Kijelző inicializálása...")
+        epd.init()
+        logger.info("Inicializálás sikeres")
+        
+        return epd
+    except Exception as e:
+        logger.error(f"Hiba a kijelző inicializálásakor: {e}")
+        logger.error(traceback.format_exc())
+        
+        # Szimulációs mód fallback
+        logger.warning("Szimulációs mód aktiválása...")
+        
+        class SimulatedEPD:
+            def __init__(self):
+                self.width = 640
+                self.height = 400
+                logger.info("Szimulált e-Paper inicializálva")
             
-        def getbuffer(self, image):
-            logger.info("Szimulált getbuffer hívás")
-            return [0x00] * (self.width * self.height // 8)
-            
-        def display(self, buffer):
-            logger.info("Szimulált kijelzés - a kép mentése: /tmp/epaper_display.png")
-            try:
-                if isinstance(buffer, list):
-                    image = Image.new('1', (self.width, self.height), color=255)
-                else:
+            def init(self):
+                logger.info("Szimulált init hívás")
+                return 0
+                
+            def getbuffer(self, image):
+                logger.info("Szimulált getbuffer hívás")
+                return image
+                
+            def display(self, buffer):
+                logger.info("Szimulált kijelzés - a kép mentése: /tmp/epaper_display.png")
+                if isinstance(buffer, Image.Image):
                     image = buffer
+                else:
+                    image = Image.new('RGB', (self.width, self.height), 'white')
                 image.save("/tmp/epaper_display.png")
-            except Exception as e:
-                logger.error(f"Hiba a szimulált kijelzés során: {e}")
-            return 0
-            
-        def sleep(self):
-            logger.info("Szimulált sleep hívás")
-            return 0
-    
-    return SimulatedEPD()
-
-# Weboldal URL meghatározása
-WEBPAGE_URL = "http://example.com"  # Cseréld ki a kívánt URL-re
+                return 0
+                
+            def sleep(self):
+                logger.info("Szimulált sleep hívás")
+                return 0
+                
+            def Clear(self, color=0xFF):
+                logger.info("Szimulált képernyő törlés")
+                return 0
+        
+        return SimulatedEPD()
 
 def capture_webpage():
     """Weboldal képernyőkép készítése különböző módszerekkel."""
@@ -587,6 +497,7 @@ def capture_webpage():
             
     except Exception as e:
         logger.error(f"Hiba a weboldal képernyőkép készítésekor: {e}")
+        logger.error(traceback.format_exc())
         # Próbáljuk megtisztítani a fennmaradt folyamatokat
         try:
             subprocess.run("pkill Xvfb", shell=True)
@@ -606,9 +517,11 @@ def display_image(epd, image_path):
         # Megjelenítés az e-paper kijelzőn
         logger.info("Kép megjelenítése a kijelzőn...")
         epd.display(epd.getbuffer(image))
+        logger.info("Kép sikeresen megjelenítve")
         return True
     except Exception as e:
         logger.error(f"Hiba a kép megjelenítésekor: {e}")
+        logger.error(traceback.format_exc())
         return False
 
 def main():
@@ -621,28 +534,36 @@ def main():
         logger.info("E-paper kijelző inicializálása...")
         epd = initialize_epd()
         
-        # Üdvözlő üzenet megjelenítése (opcionális)
+        # Üdvözlő üzenet megjelenítése
         logger.info("Rendszer indulása, üdvözlő üzenet megjelenítése...")
         try:
-            from PIL import Image, ImageDraw, ImageFont
-            image = Image.new('RGB', (epd.width, epd.height), color=(255, 255, 255))
+            # Kép létrehozása
+            image = Image.new('RGB', (epd.width, epd.height), 'white')
             draw = ImageDraw.Draw(image)
             
-            # Próbáljunk betölteni egy rendszer betűtípust
-            try:
-                font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 24)
-            except:
-                try:
-                    font = ImageFont.truetype('/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf', 24)
-                except:
-                    font = ImageFont.load_default()
-                
-            draw.text((epd.width//4, epd.height//2), 'E-Paper kijelző indul...', fill=(0, 0, 0), font=font)
+            # Betűtípus betöltése
+            font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+            if os.path.exists(font_path):
+                font_large = ImageFont.truetype(font_path, 30)
+                font_small = ImageFont.truetype(font_path, 20)
+            else:
+                # Ha nincs betűtípus, használjuk az alapértelmezettet
+                font_large = ImageFont.load_default()
+                font_small = ImageFont.load_default()
+            
+            # Szöveg kirajzolása
+            draw.text((epd.width//4, epd.height//3), 'E-Paper kijelző indul...', fill='black', font=font_large)
+            draw.text((epd.width//4, epd.height//2), f'URL: {WEBPAGE_URL}', fill='red', font=font_small)
+            
+            # Kép megjelenítése
             epd.display(epd.getbuffer(image))
+            logger.info("Üdvözlő üzenet megjelenítve")
             time.sleep(2)  # Rövid idő az üzenet olvasására
         except Exception as e:
             logger.error(f"Nem sikerült megjeleníteni az üdvözlő üzenetet: {e}")
+            logger.error(traceback.format_exc())
         
+        # Fő ciklus
         while True:
             logger.info("Weboldal képernyőkép készítése...")
             screenshot = capture_webpage()
@@ -656,7 +577,7 @@ def main():
             else:
                 logger.error("Nem sikerült képernyőképet készíteni a weboldalról")
             
-            # Várakozás 5 percig a következő frissítés előtt
+            # Várakozás a következő frissítés előtt
             logger.info("Várakozás 5 percig a következő frissítés előtt...")
             time.sleep(300)
     except KeyboardInterrupt:
@@ -664,7 +585,6 @@ def main():
         epd.sleep()
     except Exception as e:
         logger.error(f"Nem várt hiba történt: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         # Próbáljuk újraindítani a programot hiba esetén
         logger.info("Újraindítás 30 másodperc múlva...")
@@ -676,17 +596,14 @@ if __name__ == "__main__":
     main()
 EOF
 
-check_success "Nem sikerült létrehozni a Python szkriptet"
-
 # A szkript futtathatóvá tétele és virtuális környezet használata
 echo "Python szkript konfigurálása..." | tee -a "$LOG_FILE"
-# A szkript első sorát módosítjuk, hogy a virtuális környezetünket használja
 sudo sed -i "1s|.*|#!$VENV_DIR/bin/python3|" "$INSTALL_DIR/display_webpage.py"
 sudo chmod +x "$INSTALL_DIR/display_webpage.py" 2>> "$LOG_FILE"
 check_success "Nem sikerült futtathatóvá tenni a szkriptet"
 
-# Módosított Systemd szolgáltatás létrehozása bootoláskor való induláshoz
-echo "Systemd szolgáltatás létrehozása bootoláskor való induláshoz..." | tee -a "$LOG_FILE"
+# Systemd szolgáltatás létrehozása
+echo "Systemd szolgáltatás létrehozása..." | tee -a "$LOG_FILE"
 cat > /tmp/epaper-display.service << EOF
 [Unit]
 Description=E-Paper Weboldal Megjelenítő
@@ -718,54 +635,11 @@ check_success "Nem sikerült létrehozni a systemd szolgáltatást"
 
 # Log könyvtárak és fájlok létrehozása, jogosultságok beállítása
 echo "Log könyvtárak létrehozása és jogosultságok beállítása..." | tee -a "$LOG_FILE"
-sudo touch /var/log/epaper-display.log /var/log/epaper-display-stdout.log /var/log/epaper-display-stderr.log 2>> "$LOG_FILE"
-sudo chown $CURRENT_USER:$CURRENT_USER /var/log/epaper-display*.log 2>> "$LOG_FILE"
+sudo touch /var/log/epaper-display.log /var/log/epaper-display-stdout.log /var/log/epaper-display-stderr.log /var/log/epaper-test.log 2>> "$LOG_FILE"
+sudo chown $CURRENT_USER:$CURRENT_USER /var/log/epaper-display*.log /var/log/epaper-test.log 2>> "$LOG_FILE"
 
-# Szolgáltatás engedélyezése és indítása
-echo "Szolgáltatás engedélyezése és indítása..." | tee -a "$LOG_FILE"
-sudo systemctl daemon-reload 2>> "$LOG_FILE"
-sudo systemctl enable epaper-display.service 2>> "$LOG_FILE"
-check_success "Nem sikerült engedélyezni a szolgáltatást"
-
-# Rendszerindítás során automatikus indítás biztosítása rc.local fájl módosításával is
-# (alternatív módszer a systemd szolgáltatás mellett)
-echo "rc.local módosítása az automatikus indításhoz..." | tee -a "$LOG_FILE"
-if [ -f /etc/rc.local ]; then
-    # Ellenőrizzük, hogy a szkriptet már hozzáadták-e az rc.local fájlhoz
-    if ! grep -q "$INSTALL_DIR/display_webpage.py" /etc/rc.local; then
-        # A sor beszúrása az 'exit 0' előtt
-        sudo sed -i "s|^exit 0|# E-paper kijelző indítása\n(sleep 30 && $VENV_DIR/bin/python3 $INSTALL_DIR/display_webpage.py > /var/log/epaper-display-rc.log 2>&1 &)\n\nexit 0|" /etc/rc.local
-        check_success "Nem sikerült módosítani az rc.local fájlt"
-    fi
-else
-    # Ha nem létezik az rc.local fájl, létrehozzuk
-    cat > /tmp/rc.local << RCLOCAL
-#!/bin/sh -e
-#
-# rc.local
-#
-# This script is executed at the end of each multiuser runlevel.
-# Make sure that the script will "exit 0" on success or any other
-# value on error.
-#
-# In order to enable or disable this script just change the execution
-# bits.
-#
-# By default this script does nothing.
-
-# E-paper kijelző indítása
-(sleep 30 && $VENV_DIR/bin/python3 $INSTALL_DIR/display_webpage.py > /var/log/epaper-display-rc.log 2>&1 &)
-
-exit 0
-RCLOCAL
-
-    sudo mv /tmp/rc.local /etc/rc.local
-    sudo chmod +x /etc/rc.local
-    check_success "Nem sikerült létrehozni az rc.local fájlt"
-fi
-
-# Konfigurációs eszköz létrehozása
-echo "Konfigurációs eszköz létrehozása..." | tee -a "$LOG_FILE"
+# Konfigurációs segédprogram létrehozása
+echo "Konfigurációs segédprogram létrehozása..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/configure.py" << EOF
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
@@ -799,13 +673,13 @@ if __name__ == "__main__":
     update_url(new_url)
 EOF
 
-# A konfigurációs szkript első sorát is módosítjuk, hogy a virtuális környezetünket használja
+# A konfigurációs szkript futtathatóvá tétele
 sudo sed -i "1s|.*|#!$VENV_DIR/bin/python3|" "$INSTALL_DIR/configure.py"
 sudo chmod +x "$INSTALL_DIR/configure.py" 2>> "$LOG_FILE"
 check_success "Nem sikerült létrehozni a konfigurációs eszközt"
 
-# Kényelmi szkriptek létrehozása a /usr/local/bin könyvtárban
-echo "Kényelmi szkriptek létrehozása..." | tee -a "$LOG_FILE"
+# Kényelmi parancsfájlok létrehozása
+echo "Kényelmi parancsfájlok létrehozása..." | tee -a "$LOG_FILE"
 
 # URL konfigurációs szkript
 cat > /tmp/epaper-config << EOF
@@ -815,7 +689,6 @@ EOF
 
 sudo mv /tmp/epaper-config /usr/local/bin/ 2>> "$LOG_FILE"
 sudo chmod +x /usr/local/bin/epaper-config 2>> "$LOG_FILE"
-check_success "Nem sikerült létrehozni az epaper-config szkriptet"
 
 # Szolgáltatáskezelő szkript
 cat > /tmp/epaper-service << EOF
@@ -833,8 +706,11 @@ case "\$1" in
     status)
         sudo systemctl status epaper-display.service
         ;;
+    test)
+        sudo $INSTALL_DIR/test_display.py
+        ;;
     *)
-        echo "Használat: epaper-service {start|stop|restart|status}"
+        echo "Használat: epaper-service {start|stop|restart|status|test}"
         exit 1
         ;;
 esac
@@ -842,9 +718,8 @@ EOF
 
 sudo mv /tmp/epaper-service /usr/local/bin/ 2>> "$LOG_FILE"
 sudo chmod +x /usr/local/bin/epaper-service 2>> "$LOG_FILE"
-check_success "Nem sikerült létrehozni az epaper-service szkriptet"
 
-# Kényelmi szkript létrehozása a logok megtekintéséhez
+# Log megnéző szkript
 cat > /tmp/epaper-logs << EOF
 #!/bin/bash
 case "\$1" in
@@ -860,11 +735,14 @@ case "\$1" in
     stderr)
         sudo tail -f /var/log/epaper-display-stderr.log
         ;;
+    test)
+        sudo tail -f /var/log/epaper-test.log
+        ;;
     all)
-        sudo tail -f /var/log/epaper-display*.log
+        sudo tail -f /var/log/epaper-display*.log /var/log/epaper-test.log
         ;;
     *)
-        echo "Használat: epaper-logs {service|app|stdout|stderr|all}"
+        echo "Használat: epaper-logs {service|app|stdout|stderr|test|all}"
         exit 1
         ;;
 esac
@@ -872,22 +750,50 @@ EOF
 
 sudo mv /tmp/epaper-logs /usr/local/bin/ 2>> "$LOG_FILE"
 sudo chmod +x /usr/local/bin/epaper-logs 2>> "$LOG_FILE"
-check_success "Nem sikerült létrehozni az epaper-logs szkriptet"
 
-# URL beállítása először
+# Jogosultságok hozzáadása GPIO és SPI használatához
+echo "Felhasználó hozzáadása a gpio és spi csoportokhoz..." | tee -a "$LOG_FILE"
+if ! groups $CURRENT_USER | grep -q "gpio"; then
+    sudo usermod -a -G gpio $CURRENT_USER 2>> "$LOG_FILE" || true
+fi
+
+if ! groups $CURRENT_USER | grep -q "spi"; then
+    sudo usermod -a -G spi $CURRENT_USER 2>> "$LOG_FILE" || true
+fi
+
+# Waveshare teszt futtatása
+echo "Waveshare teszt futtatása a kijelző ellenőrzéséhez..." | tee -a "$LOG_FILE"
+echo "A teszt kiírja a kijelzőre, hogy 'E-Paper teszt' és 'Sikeres inicializálás!'"
+echo "Nem indítjuk el a szolgáltatást, amíg a teszt sikeres nem lesz!"
+sudo $INSTALL_DIR/test_display.py
+
+# URL bekérése
 echo "Kérlek add meg az URL-t, amit meg szeretnél jeleníteni:"
 read url
 $VENV_DIR/bin/python3 "$INSTALL_DIR/configure.py" "$url" 2>> "$LOG_FILE"
 check_success "Nem sikerült konfigurálni az URL-t"
 
-# Szolgáltatás indítása
-echo "Szolgáltatás indítása..." | tee -a "$LOG_FILE"
-sudo systemctl start epaper-display.service 2>> "$LOG_FILE"
-if [ $? -ne 0 ]; then
-    echo "Figyelmeztetés: Nem sikerült elindítani a szolgáltatást. Ez hiányzó függőségek vagy hardveres konfiguráció miatt lehet." | tee -a "$LOG_FILE"
-    echo "A szolgáltatás állapota:" | tee -a "$LOG_FILE"
-    sudo systemctl status epaper-display.service | tee -a "$LOG_FILE"
-    echo "Próbáld manuálisan elindítani újraindítás után: sudo systemctl start epaper-display.service" | tee -a "$LOG_FILE"
+# Szolgáltatás engedélyezése és indítása
+echo "Szolgáltatás engedélyezése..." | tee -a "$LOG_FILE"
+sudo systemctl daemon-reload 2>> "$LOG_FILE"
+sudo systemctl enable epaper-display.service 2>> "$LOG_FILE"
+check_success "Nem sikerült engedélyezni a szolgáltatást"
+
+# Kérdezzük meg, hogy elindítsuk-e a szolgáltatást
+echo "A teszt sikeresen lefutott? (y/n)"
+read test_success
+
+if [ "$test_success" = "y" ] || [ "$test_success" = "Y" ]; then
+    echo "Szolgáltatás indítása..." | tee -a "$LOG_FILE"
+    sudo systemctl start epaper-display.service 2>> "$LOG_FILE"
+    if [ $? -ne 0 ]; then
+        echo "Figyelmeztetés: Nem sikerült elindítani a szolgáltatást." | tee -a "$LOG_FILE"
+        echo "A szolgáltatás állapota:" | tee -a "$LOG_FILE"
+        sudo systemctl status epaper-display.service | tee -a "$LOG_FILE"
+    fi
+else
+    echo "A szolgáltatás nem lett elindítva. Kérem ellenőrizze a kijelző beállításait." | tee -a "$LOG_FILE"
+    echo "Manuálisan elindíthatja később: sudo systemctl start epaper-display.service" | tee -a "$LOG_FILE"
 fi
 
 # Összefoglaló
@@ -897,16 +803,18 @@ echo "=====================" | tee -a "$LOG_FILE"
 echo "Telepítési könyvtár: $INSTALL_DIR" | tee -a "$LOG_FILE"
 echo "Virtuális környezet: $VENV_DIR" | tee -a "$LOG_FILE"
 echo "Felhasználó: $CURRENT_USER" | tee -a "$LOG_FILE"
-echo "URL konfigurációs parancs: epaper-config <url>" | tee -a "$LOG_FILE"
-echo "Szolgáltatáskezelés: epaper-service {start|stop|restart|status}" | tee -a "$LOG_FILE"
-echo "Logok megtekintése: epaper-logs {service|app|stdout|stderr|all}" | tee -a "$LOG_FILE"
+echo "E-Paper modul: $EPD_MODULE" | tee -a "$LOG_FILE"
+echo "" | tee -a "$LOG_FILE"
+echo "Parancssori eszközök:" | tee -a "$LOG_FILE"
+echo "  epaper-config <url> - URL beállítása" | tee -a "$LOG_FILE"
+echo "  epaper-service start|stop|restart|status|test - Szolgáltatás kezelése" | tee -a "$LOG_FILE"
+echo "  epaper-logs service|app|stdout|stderr|test|all - Logok megtekintése" | tee -a "$LOG_FILE"
+echo "" | tee -a "$LOG_FILE"
 
 if [ "$REBOOT_REQUIRED" = true ]; then
-    echo "" | tee -a "$LOG_FILE"
     echo "A telepítés befejezéséhez ÚJRAINDÍTÁS SZÜKSÉGES." | tee -a "$LOG_FILE"
     echo "Kérlek indítsd újra a Raspberry Pi-t: sudo reboot" | tee -a "$LOG_FILE"
 fi
 
-echo "" | tee -a "$LOG_FILE"
 echo "Telepítés befejezve: $(date)" | tee -a "$LOG_FILE"
 echo "Részletes naplókat lásd: $LOG_FILE" | tee -a "$LOG_FILE"
