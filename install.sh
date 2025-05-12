@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# install.sh - Javított telepítő szkript e-paper weblap megjelenítőhöz
+# install.sh - Teljesen frissített telepítő szkript e-paper weblap megjelenítőhöz
 # Raspberry Pi Zero 2W + Waveshare 4.01 inch HAT (F) 7 színű e-paper kijelzőhöz
+# Frissítve: 2025.05.12 - externally-managed-environment hiba javítása és virtuális környezet használata
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="install_log.txt"
@@ -23,6 +24,7 @@ check_success() {
 
 # Telepítési könyvtár létrehozása
 INSTALL_DIR="/opt/epaper-display"
+VENV_DIR="${INSTALL_DIR}/venv"  # Virtuális környezet könyvtára
 echo "Telepítési könyvtár létrehozása..." | tee -a "$LOG_FILE"
 sudo mkdir -p "$INSTALL_DIR" 2>> "$LOG_FILE"
 check_success "Nem sikerült létrehozni a telepítési könyvtárat"
@@ -48,19 +50,17 @@ echo "Szükséges rendszercsomagok telepítése..." | tee -a "$LOG_FILE"
 sudo apt-get update 2>> "$LOG_FILE"
 check_success "Nem sikerült frissíteni a csomaglistákat"
 
+# Python-venv csomag telepítése virtuális környezethez
+echo "Python virtuális környezet támogatás telepítése..." | tee -a "$LOG_FILE"
+sudo apt-get install -y python3-venv 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni a python3-venv csomagot"
+
 # Több módszer kipróbálása a csomagtelepítéshez
-if ! sudo apt-get install -y python3-pip python3-pil python3-numpy git xvfb scrot 2>> "$LOG_FILE"; then
-    echo "Szabványos csomagtelepítés sikertelen, alternatív módszer kipróbálása..." | tee -a "$LOG_FILE"
-    if ! sudo apt-get install --fix-missing -y python3-pip python3-pil python3-numpy git xvfb scrot 2>> "$LOG_FILE"; then
-        echo "Csomagok egyenkénti telepítési kísérlete..." | tee -a "$LOG_FILE"
-        sudo apt-get install -y python3-pip 2>> "$LOG_FILE" || echo "python3-pip telepítése sikertelen, folytatás..." | tee -a "$LOG_FILE"
-        sudo apt-get install -y python3-pil 2>> "$LOG_FILE" || echo "python3-pil telepítése sikertelen, folytatás..." | tee -a "$LOG_FILE"
-        sudo apt-get install -y python3-numpy 2>> "$LOG_FILE" || echo "python3-numpy telepítése sikertelen, folytatás..." | tee -a "$LOG_FILE"
-        sudo apt-get install -y git 2>> "$LOG_FILE" || echo "git telepítése sikertelen, folytatás..." | tee -a "$LOG_FILE"
-        sudo apt-get install -y xvfb 2>> "$LOG_FILE" || echo "xvfb telepítése sikertelen, folytatás..." | tee -a "$LOG_FILE"
-        sudo apt-get install -y scrot 2>> "$LOG_FILE" || echo "scrot telepítése sikertelen, folytatás..." | tee -a "$LOG_FILE"
-    fi
-fi
+echo "Egyéb rendszercsomagok telepítése..." | tee -a "$LOG_FILE"
+# Először APT-val próbáljuk
+sudo apt-get install -y python3-pil python3-numpy git xvfb scrot 2>> "$LOG_FILE" || true
+# Python-GPIO és SPI modulok telepítése APT-tal
+sudo apt-get install -y python3-rpi.gpio python3-spidev 2>> "$LOG_FILE" || true
 
 # Weboldal capture eszközök telepítése
 echo "Weboldal megjelenítéshez szükséges eszközök telepítése..." | tee -a "$LOG_FILE"
@@ -69,15 +69,19 @@ if ! sudo apt-get install -y wkhtmltopdf 2>> "$LOG_FILE"; then
     sudo apt-get install -y cutycapt 2>> "$LOG_FILE" || echo "cutycapt telepítése is sikertelen, a midori böngészőt fogjuk használni" | tee -a "$LOG_FILE"
 fi
 
-# Python függőségek telepítése az e-paper kijelzőhöz
-echo "E-paper függőségek telepítése..." | tee -a "$LOG_FILE"
-if ! sudo pip3 install RPi.GPIO spidev 2>> "$LOG_FILE"; then
-    echo "Standard pip telepítés sikertelen, alternatív módszer kipróbálása..." | tee -a "$LOG_FILE"
-    if ! sudo pip3 install --break-system-packages RPi.GPIO spidev 2>> "$LOG_FILE"; then
-        echo "Pip telepítés alternatív módszerrel is sikertelen, folytatás a következő lépéssel..." | tee -a "$LOG_FILE"
-        # Folytatjuk, mert lehet, hogy már telepítve vannak
-    fi
-fi
+# Virtuális környezet létrehozása
+echo "Python virtuális környezet létrehozása..." | tee -a "$LOG_FILE"
+sudo $PYTHON_CMD -m venv "$VENV_DIR" 2>> "$LOG_FILE"
+check_success "Nem sikerült létrehozni a virtuális környezetet"
+
+# Jogosultságok beállítása
+sudo chown -R pi:pi "$VENV_DIR" 2>> "$LOG_FILE" || true
+
+# Python függőségek telepítése a virtuális környezetbe
+echo "Python függőségek telepítése a virtuális környezetbe..." | tee -a "$LOG_FILE"
+"$VENV_DIR/bin/pip" install --upgrade pip 2>> "$LOG_FILE"
+"$VENV_DIR/bin/pip" install RPi.GPIO spidev Pillow numpy 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni a Python függőségeket a virtuális környezetbe"
 
 # Waveshare e-paper könyvtár klónozása és felderítése
 echo "Waveshare e-paper könyvtár klónozása és felderítése..." | tee -a "$LOG_FILE"
@@ -279,6 +283,7 @@ import time
 import subprocess
 from PIL import Image
 import logging
+import importlib.util
 
 # Logging beállítása
 logging.basicConfig(
@@ -573,16 +578,16 @@ def main():
         main()  # Rekurzív újraindítás
 
 if __name__ == "__main__":
-    # Importokhoz
-    import importlib.util
-    
     logger.info("Program indítása...")
     main()
 EOF
 
 check_success "Nem sikerült létrehozni a Python szkriptet"
 
-# A szkript futtathatóvá tétele
+# A szkript futtathatóvá tétele és virtuális környezet használata
+echo "Python szkript konfigurálása..." | tee -a "$LOG_FILE"
+# A shkript első sorát módosítjuk, hogy a virtuális környezetünket használja
+sudo sed -i "1s|.*|#!$VENV_DIR/bin/python3|" "$INSTALL_DIR/display_webpage.py"
 sudo chmod +x "$INSTALL_DIR/display_webpage.py" 2>> "$LOG_FILE"
 check_success "Nem sikerült futtathatóvá tenni a szkriptet"
 
@@ -599,7 +604,7 @@ DefaultDependencies=no
 Type=simple
 User=pi
 WorkingDirectory=$INSTALL_DIR
-ExecStart=$PYTHON_CMD $INSTALL_DIR/display_webpage.py
+ExecStart=$VENV_DIR/bin/python3 $INSTALL_DIR/display_webpage.py
 Restart=always
 RestartSec=10
 TimeoutStartSec=120
@@ -635,7 +640,7 @@ if [ -f /etc/rc.local ]; then
     # Ellenőrizzük, hogy a szkriptet már hozzáadták-e az rc.local fájlhoz
     if ! grep -q "$INSTALL_DIR/display_webpage.py" /etc/rc.local; then
         # A sor beszúrása az 'exit 0' előtt
-        sudo sed -i "s|^exit 0|# E-paper kijelző indítása\n(sleep 30 && $PYTHON_CMD $INSTALL_DIR/display_webpage.py > /var/log/epaper-display-rc.log 2>&1 &)\n\nexit 0|" /etc/rc.local
+        sudo sed -i "s|^exit 0|# E-paper kijelző indítása\n(sleep 30 && $VENV_DIR/bin/python3 $INSTALL_DIR/display_webpage.py > /var/log/epaper-display-rc.log 2>&1 &)\n\nexit 0|" /etc/rc.local
         check_success "Nem sikerült módosítani az rc.local fájlt"
     fi
 else
@@ -655,7 +660,7 @@ else
 # By default this script does nothing.
 
 # E-paper kijelző indítása
-(sleep 30 && $PYTHON_CMD $INSTALL_DIR/display_webpage.py > /var/log/epaper-display-rc.log 2>&1 &)
+(sleep 30 && $VENV_DIR/bin/python3 $INSTALL_DIR/display_webpage.py > /var/log/epaper-display-rc.log 2>&1 &)
 
 exit 0
 RCLOCAL
@@ -673,6 +678,7 @@ cat > "$INSTALL_DIR/configure.py" << EOF
 
 import os
 import sys
+import re
 
 config_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "display_webpage.py")
 
@@ -681,10 +687,6 @@ def update_url(new_url):
         content = f.read()
     
     # URL frissítése a fájlban
-    content = content.replace('WEBPAGE_URL = "http://example.com"', f'WEBPAGE_URL = "{new_url}"')
-    
-    # Más URL minta - ha már korábban módosítva lett
-    import re
     pattern = r'WEBPAGE_URL = ".*?"'
     content = re.sub(pattern, f'WEBPAGE_URL = "{new_url}"', content)
     
@@ -703,6 +705,8 @@ if __name__ == "__main__":
     update_url(new_url)
 EOF
 
+# A konfigurációs szkript első sorát is módosítjuk, hogy a virtuális környezetünket használja
+sudo sed -i "1s|.*|#!$VENV_DIR/bin/python3|" "$INSTALL_DIR/configure.py"
 sudo chmod +x "$INSTALL_DIR/configure.py" 2>> "$LOG_FILE"
 check_success "Nem sikerült létrehozni a konfigurációs eszközt"
 
@@ -712,7 +716,7 @@ echo "Kényelmi szkriptek létrehozása..." | tee -a "$LOG_FILE"
 # URL konfigurációs szkript
 cat > /tmp/epaper-config << EOF
 #!/bin/bash
-$PYTHON_CMD $INSTALL_DIR/configure.py \$1
+$VENV_DIR/bin/python3 $INSTALL_DIR/configure.py \$1
 EOF
 
 sudo mv /tmp/epaper-config /usr/local/bin/ 2>> "$LOG_FILE"
@@ -779,7 +783,7 @@ check_success "Nem sikerült létrehozni az epaper-logs szkriptet"
 # URL beállítása először
 echo "Kérlek add meg az URL-t, amit meg szeretnél jeleníteni:"
 read url
-$PYTHON_CMD "$INSTALL_DIR/configure.py" "$url" 2>> "$LOG_FILE"
+$VENV_DIR/bin/python3 "$INSTALL_DIR/configure.py" "$url" 2>> "$LOG_FILE"
 check_success "Nem sikerült konfigurálni az URL-t"
 
 # Szolgáltatás indítása
@@ -795,6 +799,7 @@ echo "" | tee -a "$LOG_FILE"
 echo "Telepítési összefoglaló:" | tee -a "$LOG_FILE"
 echo "=====================" | tee -a "$LOG_FILE"
 echo "Telepítési könyvtár: $INSTALL_DIR" | tee -a "$LOG_FILE"
+echo "Virtuális környezet: $VENV_DIR" | tee -a "$LOG_FILE"
 echo "URL konfigurációs parancs: epaper-config <url>" | tee -a "$LOG_FILE"
 echo "Szolgáltatáskezelés: epaper-service {start|stop|restart|status}" | tee -a "$LOG_FILE"
 echo "Logok megtekintése: epaper-logs {service|app|stdout|stderr|all}" | tee -a "$LOG_FILE"
