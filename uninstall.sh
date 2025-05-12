@@ -2,6 +2,7 @@
 
 # uninstall.sh - Eltávolító szkript e-paper weblap megjelenítőhöz
 # Raspberry Pi Zero 2W + Waveshare 4.01 inch HAT (F) e-paper kijelzőhöz
+# Frissítve a virtuális környezet kezelésére
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="uninstall_log.txt"
@@ -23,6 +24,7 @@ check_success() {
 
 # Telepítési könyvtár
 INSTALL_DIR="/opt/epaper-display"
+VENV_DIR="${INSTALL_DIR}/venv"
 
 # Szolgáltatás leállítása és letiltása
 echo "Szolgáltatás leállítása és letiltása..." | tee -a "$LOG_FILE"
@@ -70,9 +72,16 @@ echo "Log fájlok eltávolítása..." | tee -a "$LOG_FILE"
 sudo rm -f /var/log/epaper-display*.log 2>> "$LOG_FILE" || true
 echo "Log fájlok eltávolítva" | tee -a "$LOG_FILE"
 
-# Telepítési könyvtár eltávolítása
+# Telepítési könyvtár eltávolítása (beleértve a virtuális környezetet is)
 echo "Telepítési könyvtár eltávolítása..." | tee -a "$LOG_FILE"
 if [ -d "$INSTALL_DIR" ]; then
+    echo "Virtuális környezet eltávolítása (ha létezik): $VENV_DIR" | tee -a "$LOG_FILE"
+    # A virtuális környezet külön törlése
+    if [ -d "$VENV_DIR" ]; then
+        sudo rm -rf "$VENV_DIR" 2>> "$LOG_FILE" || true
+    fi
+    
+    # Ezután a teljes telepítési könyvtár törlése
     sudo rm -rf "$INSTALL_DIR" 2>> "$LOG_FILE"
     check_success "Nem sikerült eltávolítani a telepítési könyvtárat"
 fi
@@ -96,18 +105,6 @@ if [ -d "/tmp/waveshare-install" ]; then
     sudo rm -rf /tmp/waveshare-install 2>> "$LOG_FILE" || true
 fi
 
-# Python függőségek eltávolításának kérdezése
-echo "El szeretnéd távolítani a Python függőségeket (RPi.GPIO, spidev)? (y/n)"
-read remove_deps
-
-if [ "$remove_deps" = "y" ] || [ "$remove_deps" = "Y" ]; then
-    echo "Python függőségek eltávolítása..." | tee -a "$LOG_FILE"
-    sudo pip3 uninstall -y RPi.GPIO spidev 2>> "$LOG_FILE" || true
-    echo "A függőségek lehet, hogy eltávolításra kerültek. Előfordulhat, hogy néhányat más alkalmazások még használnak." | tee -a "$LOG_FILE"
-else
-    echo "Python függőségek eltávolításának kihagyása." | tee -a "$LOG_FILE"
-fi
-
 # SPI letiltásának kérdezése
 echo "Le szeretnéd tiltani az SPI interfészt? (y/n)"
 read disable_spi
@@ -123,6 +120,9 @@ else
     REBOOT_REQUIRED=false
 fi
 
+# Rendszer Python csomagok érintetlenül hagyása
+echo "A rendszer Python csomagok érintetlenül maradnak, mivel virtuális környezetben futott az alkalmazás." | tee -a "$LOG_FILE"
+
 # Maradványok ellenőrzése és figyelmeztetés
 echo "Maradványok ellenőrzése..." | tee -a "$LOG_FILE"
 remaining_files=$(find /usr/local/bin -name "epaper-*" 2>/dev/null || true)
@@ -137,6 +137,7 @@ echo "" | tee -a "$LOG_FILE"
 echo "Eltávolítási összefoglaló:" | tee -a "$LOG_FILE"
 echo "======================" | tee -a "$LOG_FILE"
 echo "Eltávolított telepítési könyvtár: $INSTALL_DIR" | tee -a "$LOG_FILE"
+echo "Eltávolított virtuális környezet: $VENV_DIR" | tee -a "$LOG_FILE"
 echo "Eltávolított szolgáltatás: epaper-display.service" | tee -a "$LOG_FILE"
 echo "Eltávolított szkriptek: epaper-config, epaper-service, epaper-logs" | tee -a "$LOG_FILE"
 echo "Eltávolított logfájlok: /var/log/epaper-display*.log" | tee -a "$LOG_FILE"
