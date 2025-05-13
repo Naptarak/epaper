@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# install_7color.sh - Speciális telepítő szkript 7-színű Waveshare 4.01 inch HAT (F) kijelzőhöz
-# Készítve: 2025.05.13
+# install_7color_optimized.sh - Optimalizált telepítő szkript 7-színű Waveshare 4.01 inch HAT (F) kijelzőhöz
+# Készítve: 2025.05.14
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="install_7color_log.txt"
-echo "7-színű e-Paper telepítés indítása: $(date)" | tee -a "$LOG_FILE"
+echo "Optimalizált 7-színű e-Paper 4.01 inch telepítés indítása: $(date)" | tee -a "$LOG_FILE"
 
 # Aktuális felhasználó azonosítása
 CURRENT_USER=$(whoami)
@@ -26,52 +26,40 @@ check_success() {
 }
 
 # Korábbi telepítés eltávolítása (ha létezik)
-echo "Korábbi telepítés ellenőrzése és eltávolítása..." | tee -a "$LOG_FILE"
+echo "Korábbi telepítés eltávolítása..." | tee -a "$LOG_FILE"
 
-# Szolgáltatás leállítása
+# Szolgáltatás leállítása és letiltása
 if systemctl is-active --quiet epaper-display.service; then
-    echo "Futó szolgáltatás leállítása..." | tee -a "$LOG_FILE"
     sudo systemctl stop epaper-display.service 2>> "$LOG_FILE" || true
 fi
 
-# Szolgáltatás letiltása
 if systemctl is-enabled --quiet epaper-display.service 2>/dev/null; then
-    echo "Szolgáltatás letiltása..." | tee -a "$LOG_FILE"
     sudo systemctl disable epaper-display.service 2>> "$LOG_FILE" || true
 fi
 
-# Szolgáltatásfájl eltávolítása
 if [ -f /etc/systemd/system/epaper-display.service ]; then
-    echo "Szolgáltatásfájl eltávolítása..." | tee -a "$LOG_FILE"
     sudo rm /etc/systemd/system/epaper-display.service 2>> "$LOG_FILE" || true
     sudo systemctl daemon-reload 2>> "$LOG_FILE" || true
 fi
 
-# Kényelmi szkriptek eltávolítása
-echo "Kényelmi szkriptek eltávolítása (ha léteznek)..." | tee -a "$LOG_FILE"
+# Kényelmi szkriptek és futó háttérfolyamatok eltávolítása
 for script in epaper-config epaper-service epaper-logs; do
     if [ -f /usr/local/bin/$script ]; then
         sudo rm /usr/local/bin/$script 2>> "$LOG_FILE" || true
     fi
 done
 
-# Futó háttérfolyamatok leállítása
-echo "Futó háttérfolyamatok ellenőrzése..." | tee -a "$LOG_FILE"
 sudo pkill -f "display_webpage.py" 2>/dev/null || true
 sudo pkill -f "Xvfb" 2>/dev/null || true
 sudo pkill -f "midori" 2>/dev/null || true
 sudo pkill -f "wkhtmltoimage" 2>/dev/null || true
 sudo pkill -f "cutycapt" 2>/dev/null || true
 
-# Ideiglenes könyvtárak tisztítása
-echo "Ideiglenes könyvtárak tisztítása..." | tee -a "$LOG_FILE"
-sudo rm -rf /tmp/screenshot 2>/dev/null || true
-sudo rm -rf /tmp/waveshare-install 2>/dev/null || true
+# Ideiglenes könyvtárak és régi telepítés törlése
+sudo rm -rf /tmp/screenshot /tmp/waveshare-install 2>/dev/null || true
 
-# Telepítési könyvtár tisztítása
 INSTALL_DIR="/opt/epaper-display"
 if [ -d "$INSTALL_DIR" ]; then
-    echo "Korábbi telepítési könyvtár eltávolítása: $INSTALL_DIR" | tee -a "$LOG_FILE"
     sudo rm -rf "$INSTALL_DIR" 2>> "$LOG_FILE" || true
 fi
 
@@ -79,77 +67,38 @@ fi
 echo "Új telepítési könyvtár létrehozása: $INSTALL_DIR" | tee -a "$LOG_FILE"
 sudo mkdir -p "$INSTALL_DIR" 2>> "$LOG_FILE"
 check_success "Nem sikerült létrehozni a telepítési könyvtárat"
-
-# Jogosultságok beállítása
 sudo chown $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR" 2>> "$LOG_FILE"
-check_success "Nem sikerült beállítani a jogosultságokat"
 
-# Python verzió ellenőrzése
-echo "Python telepítés ellenőrzése..." | tee -a "$LOG_FILE"
-if command -v python3 &>/dev/null; then
-    PYTHON_CMD="python3"
-elif command -v python &>/dev/null; then
-    PYTHON_CMD="python"
-else
-    echo "Python nem található, telepítési kísérlet..." | tee -a "$LOG_FILE"
-    sudo apt-get update && sudo apt-get install -y python3 python3-pip 2>> "$LOG_FILE"
-    check_success "Nem sikerült telepíteni a Python-t"
-    PYTHON_CMD="python3"
-fi
-
-echo "Python parancs: $PYTHON_CMD" | tee -a "$LOG_FILE"
-$PYTHON_CMD --version | tee -a "$LOG_FILE"
-
-# Rendszerfrissítés
-echo "Rendszerfrissítés..." | tee -a "$LOG_FILE"
+# Python és szükséges rendszercsomagok telepítése
+echo "Rendszerfrissítés és csomagok telepítése..." | tee -a "$LOG_FILE"
 sudo apt-get update 2>> "$LOG_FILE"
 check_success "Nem sikerült frissíteni a csomaglistákat"
 
-# Szükséges rendszercsomagok telepítése
-echo "Szükséges rendszercsomagok telepítése..." | tee -a "$LOG_FILE"
-sudo apt-get install -y python3-pip python3-venv git 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni az alapvető csomagokat"
+# KRITIKUS: Rendszerszintű csomagokat telepítünk, hogy ne kelljen NumPy-t fordítani
+echo "Rendszerszintű Python csomagok telepítése..." | tee -a "$LOG_FILE"
+sudo apt-get install -y python3-pip python3-venv python3-rpi.gpio python3-spidev python3-pil python3-numpy xvfb git 2>> "$LOG_FILE"
+check_success "Nem sikerült telepíteni a szükséges csomagokat"
 
-# SPI és GPIO modulok telepítése
-echo "SPI és GPIO modulok telepítése..." | tee -a "$LOG_FILE"
-sudo apt-get install -y python3-rpi.gpio python3-spidev 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni az SPI és GPIO modulokat"
-
-# Pillow és NumPy telepítése
-echo "Pillow és NumPy telepítése..." | tee -a "$LOG_FILE"
-sudo apt-get install -y python3-pil python3-numpy 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni a képfeldolgozási modulokat"
-
-# Weboldal megjelenítés csomagok telepítése
-echo "Weboldal megjelenítéshez szükséges csomagok telepítése..." | tee -a "$LOG_FILE"
-sudo apt-get install -y xvfb scrot 2>> "$LOG_FILE" || true
-if ! sudo apt-get install -y wkhtmltopdf 2>> "$LOG_FILE"; then
-    echo "wkhtmltopdf telepítése sikertelen, alternatív módszer megpróbálása..." | tee -a "$LOG_FILE"
-    sudo apt-get install -y cutycapt 2>> "$LOG_FILE" || echo "cutycapt telepítése is sikertelen" | tee -a "$LOG_FILE"
-fi
+# Opcionális weboldal megjelenítő eszközök telepítése
+sudo apt-get install -y scrot wkhtmltopdf 2>> "$LOG_FILE" || sudo apt-get install -y cutycapt 2>> "$LOG_FILE" || true
 
 # Virtuális környezet könyvtára
 VENV_DIR="${INSTALL_DIR}/venv"
 
-# Virtuális környezet létrehozása
-echo "Python virtuális környezet létrehozása: $VENV_DIR" | tee -a "$LOG_FILE"
-$PYTHON_CMD -m venv "$VENV_DIR" 2>> "$LOG_FILE"
+# Virtuális környezet létrehozása RENDSZERMODULOKKAL - ez a kulcs a gyors telepítéshez!
+echo "Python virtuális környezet létrehozása RENDSZERMODULOKKAL: $VENV_DIR" | tee -a "$LOG_FILE"
+python3 -m venv "$VENV_DIR" --system-site-packages 2>> "$LOG_FILE"
 check_success "Nem sikerült létrehozni a virtuális környezetet"
 
-# Jogosultságok beállítása a virtuális környezethez
-echo "Jogosultságok beállítása a virtuális környezethez..." | tee -a "$LOG_FILE"
 sudo chown -R $CURRENT_USER:$CURRENT_USER "$VENV_DIR" 2>> "$LOG_FILE"
 check_success "Nem sikerült beállítani a jogosultságokat a virtuális környezethez"
 
-# Python függőségek telepítése a virtuális környezetbe
-echo "Python függőségek telepítése a virtuális környezetbe..." | tee -a "$LOG_FILE"
+# Pip frissítése a virtuális környezetben
+echo "Python pip frissítése a virtuális környezetben..." | tee -a "$LOG_FILE"
 "$VENV_DIR/bin/pip" install --upgrade pip 2>> "$LOG_FILE"
 check_success "Nem sikerült frissíteni a pip-et"
 
-# Telepítjük a szükséges függőségeket
-echo "Szükséges Python csomagok telepítése..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install pillow numpy RPi.GPIO spidev 2>> "$LOG_FILE"
-check_success "Nem sikerült telepíteni a szükséges Python csomagokat"
+# FONTOS: NEM telepítjük a NumPy-t és egyéb nehéz csomagokat, helyette a rendszerszintűt használjuk
 
 # Könyvtárstruktúra létrehozása
 echo "Könyvtárstruktúra létrehozása..." | tee -a "$LOG_FILE"
@@ -171,8 +120,8 @@ else
     REBOOT_REQUIRED=false
 fi
 
-# Speciális epdconfig.py modul létrehozása a 7-színű kijelzőhöz
-echo "epdconfig.py létrehozása a 7-színű kijelzőhöz..." | tee -a "$LOG_FILE"
+# Speciális epdconfig.py modul létrehozása 7-színű 4.01 inch e-Paper kijelzőhöz
+echo "epdconfig.py létrehozása a 7-színű 4.01 inch kijelzőhöz..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/lib/waveshare_epd/epdconfig.py" << EOF
 #!/usr/bin/python
 # -*- coding:utf-8 -*-
@@ -182,7 +131,7 @@ import logging
 import sys
 import time
 
-# GPIO Pin definíciók a 7-színű kijelzőhöz
+# GPIO Pin definíciók a 7-színű 4.01 inch kijelzőhöz
 RST_PIN = 17
 DC_PIN = 25
 CS_PIN = 8
@@ -245,8 +194,8 @@ DC_PIN = 25
 CS_PIN = 8
 EOF
 
-# Speciális epd4in01f.py modul létrehozása a 7-színű kijelzőhöz
-echo "epd4in01f.py létrehozása a 7-színű kijelzőhöz..." | tee -a "$LOG_FILE"
+# Speciális epd4in01f.py modul létrehozása a 7-színű 4.01 inch kijelzőhöz
+echo "epd4in01f.py létrehozása a 7-színű 4.01 inch kijelzőhöz..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/lib/waveshare_epd/epd4in01f.py" << EOF
 #!/usr/bin/python
 # -*- coding:utf-8 -*-
@@ -259,11 +208,11 @@ from PIL import Image
 import epdconfig
 
 class EPD:
-    # Display resolution
+    # Waveshare 4.01 inch 7-Color e-Paper felbontása
     WIDTH = 640
     HEIGHT = 400
     
-    # Display colors
+    # A 7 szín definíciói
     BLACK = 0x000000
     WHITE = 0xffffff
     GREEN = 0x00ff00
@@ -272,7 +221,7 @@ class EPD:
     YELLOW = 0xffff00
     ORANGE = 0xffa500
     
-    # Command constants
+    # Parancs konstansok
     PANEL_SETTING = 0x00
     POWER_SETTING = 0x01
     POWER_OFF = 0x02
@@ -284,6 +233,18 @@ class EPD:
     DATA_START_TRANSMISSION_1 = 0x10
     DATA_STOP = 0x11
     DISPLAY_REFRESH = 0x12
+    DATA_START_TRANSMISSION_2 = 0x13
+    PLL_CONTROL = 0x30
+    TEMPERATURE_CALIBRATION = 0x40
+    VCOM_AND_DATA_INTERVAL_SETTING = 0x50
+    LOW_POWER_DETECTION = 0x51
+    TCON_SETTING = 0x60
+    RESOLUTION_SETTING = 0x61
+    GSST_SETTING = 0x65
+    GET_STATUS = 0x71
+    AUTO_MEASUREMENT_VCOM = 0x80
+    READ_VCOM_VALUE = 0x81
+    VCM_DC_SETTING = 0x82
     
     def __init__(self):
         self.width = self.WIDTH
@@ -299,32 +260,53 @@ class EPD:
         }
         
     def init(self):
+        logging.debug("Waveshare 4.01 inch 7-Color e-Paper inicializálása")
         if epdconfig.module_init() != 0:
             return -1
         
-        # 7-színű e-Paper kijelző inicializálása
+        # E-Paper kijelző inicializálása
         self.reset()
         
+        # Power Settings
         self.send_command(self.POWER_SETTING)
-        self.send_data(0x07)
-        self.send_data(0x07)
-        self.send_data(0x3f)
-        self.send_data(0x3f)
+        self.send_data(0x07)  # VGH&VGL setting
+        self.send_data(0x07)  # VGH=20V, VGL=-20V
+        self.send_data(0x3f)  # VDH=15V
+        self.send_data(0x3f)  # VDL=-15V
         
+        # POWER ON bekapcsolás
         self.send_command(self.POWER_ON)
+        time.sleep(0.1)
         self.wait_until_idle()
         
+        # Panel beállítás
         self.send_command(self.PANEL_SETTING)
-        self.send_data(0x0f)
+        self.send_data(0x0F)  # KW-3f KWR-2F BWROTP-0f BWOTP-1f
         
-        logging.info("7-színű e-Paper inicializálás sikeres")
+        # Felbontás beállítása
+        self.send_command(self.RESOLUTION_SETTING)
+        self.send_data(0x02)  # 640x480
+        self.send_data(0x80)
+        self.send_data(0x01)
+        self.send_data(0x90) 
+        
+        # VCOM and Data Interval Setting
+        self.send_command(self.VCOM_AND_DATA_INTERVAL_SETTING)
+        self.send_data(0x11)
+        self.send_data(0x07)
+        
+        # TCON beállítás
+        self.send_command(self.TCON_SETTING)
+        self.send_data(0x22)
+        
+        logging.info("4.01 inch 7-színű e-Paper inicializálás sikeres")
         return 0
 
     def wait_until_idle(self):
         logging.debug("Várakozás a kijelző BUSY jelére...")
         while epdconfig.digital_read(epdconfig.BUSY_PIN) == 0:
-            epdconfig.delay_ms(100)
-        logging.debug("Kijelző kész")
+            epdconfig.delay_ms(10)
+        logging.debug("Kijelző BUSY jel elengedve")
 
     def reset(self):
         logging.debug("Kijelző reset...")
@@ -364,10 +346,11 @@ class EPD:
         # Átméretezés a kijelző felbontására, ha szükséges
         if image.width != self.width or image.height != self.height:
             logging.debug("Kép átméretezése: %sx%s -> %sx%s", 
-                          image.width, image.height, self.width, self.height)
+                         image.width, image.height, self.width, self.height)
             image = image.resize((self.width, self.height))
         
-        # Adat küldése a kijelzőnek
+        # Kezdjük a képátvitelt
+        logging.debug("Kép adatátvitel indítása...")
         self.send_command(self.DATA_START_TRANSMISSION_1)
         
         # Képadatok feldolgozása és küldése
@@ -375,7 +358,7 @@ class EPD:
         for y in range(self.height):
             for x in range(self.width):
                 r, g, b = pixels[x, y]
-                # Színek egyszerű megfeleltetése a 7 színhez
+                # Színek megfeleltetése a 7 színhez
                 if r == 0 and g == 0 and b == 0:  # Fekete
                     self.send_data(0x00)
                 elif r == 255 and g == 255 and b == 255:  # Fehér
@@ -391,10 +374,12 @@ class EPD:
                 elif r == 255 and g >= 165 and b == 0:  # Narancs
                     self.send_data(0x06)
                 else:
-                    # Ha a szín nem közvetlen megfelelő, használjuk a legközelebbi 7 színt
-                    self.send_data(0x01)  # Alapértelmezetten fehér
+                    # Ha a szín nem felel meg egyiknek sem, használjuk a legközelebbi színt
+                    # Egyszerű implementáció: most fehér lesz az alapértelmezett
+                    self.send_data(0x01)
         
         # Kijelző frissítése
+        logging.debug("Kijelző frissítése...")
         self.send_command(self.DISPLAY_REFRESH)
         self.wait_until_idle()
         
@@ -450,7 +435,7 @@ logging.basicConfig(
     ]
 )
 
-logging.info("7-színű E-Paper teszt program indítása")
+logging.info("7-színű 4.01 inch E-Paper teszt program indítása")
 logging.info("Python verzió: %s", sys.version)
 
 # Elérési útvonal beállítása
@@ -513,7 +498,7 @@ try:
         font_small = ImageFont.load_default()
     
     # Főcím kirajzolása
-    draw.text((50, 40), '7-színű E-Paper teszt', fill='black', font=font_large)
+    draw.text((50, 40), '7-színű 4.01" E-Paper teszt', fill='black', font=font_large)
     draw.text((50, 100), 'Sikeres inicializálás!', fill='red', font=font_medium)
     
     # Színtesztek
@@ -533,7 +518,6 @@ try:
         draw.rectangle([(50, y_pos), (150, y_pos + 30)], fill=color)
         
         # Színnév kiírása
-        text_color = 'black' if color_name in ['Fehér', 'Sárga', 'Zöld', 'Narancs'] else 'white'
         draw.text((160, y_pos + 5), color_name, fill='black', font=font_small)
         
         y_pos += 35
@@ -569,6 +553,7 @@ EOF
 # Weboldal megjelenítő szkript létrehozása
 echo "Weboldal megjelenítő szkript létrehozása..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/display_webpage.py" << EOF
+
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
 
@@ -582,12 +567,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 # Logging beállítása
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("/var/log/epaper-display.log"),
-        logging.StreamHandler()
-    ]
+   level=logging.INFO,
+   format='%(asctime)s - %(levelname)s - %(message)s',
+   handlers=[
+       logging.FileHandler("/var/log/epaper-display.log"),
+       logging.StreamHandler()
+   ]
 )
 logger = logging.getLogger('epaper-display')
 
@@ -601,311 +586,311 @@ sys.path.append(waveshare_dir)
 logger.info("Waveshare könyvtár hozzáadva: %s", waveshare_dir)
 
 # Weboldal URL meghatározása
-WEBPAGE_URL = "http://naptarak.com/e-paper.html"  # Cseréld ki a kívánt URL-re
+WEBPAGE_URL = "http://naptarak.com/e-paper.html"
 
 # Várakozás a hálózati kapcsolatra
 def wait_for_network():
-    max_attempts = 30  # Max 5 perc (30 * 10 másodperc)
-    attempts = 0
-    
-    logger.info("Várakozás a hálózati kapcsolat elérhetőségére...")
-    
-    while attempts < max_attempts:
-        try:
-            result = subprocess.run(
-                ["ping", "-c", "1", "8.8.8.8"], 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
-                timeout=5
-            )
-            if result.returncode == 0:
-                logger.info("Hálózat elérhető")
-                return True
-        except Exception as e:
-            logger.warning(f"Ping hiba: {e}")
-        
-        logger.info(f"Hálózat még nem elérhető, várakozás... ({attempts+1}/{max_attempts})")
-        attempts += 1
-        time.sleep(10)
-    
-    logger.error("Nem sikerült kapcsolódni a hálózathoz az időkorláton belül")
-    return False
+   max_attempts = 30  # Max 5 perc (30 * 10 másodperc)
+   attempts = 0
+   
+   logger.info("Várakozás a hálózati kapcsolat elérhetőségére...")
+   
+   while attempts < max_attempts:
+       try:
+           result = subprocess.run(
+               ["ping", "-c", "1", "8.8.8.8"], 
+               stdout=subprocess.PIPE, 
+               stderr=subprocess.PIPE,
+               timeout=5
+           )
+           if result.returncode == 0:
+               logger.info("Hálózat elérhető")
+               return True
+       except Exception as e:
+           logger.warning(f"Ping hiba: {e}")
+       
+       logger.info(f"Hálózat még nem elérhető, várakozás... ({attempts+1}/{max_attempts})")
+       attempts += 1
+       time.sleep(10)
+   
+   logger.error("Nem sikerült kapcsolódni a hálózathoz az időkorláton belül")
+   return False
 
 # E-paper inicializálása
 def initialize_epd():
-    try:
-        logger.info("epdconfig importálása...")
-        import epdconfig
-        logger.info("epdconfig sikeresen importálva")
-        
-        logger.info("epd4in01f importálása...")
-        import epd4in01f
-        logger.info("epd4in01f sikeresen importálva")
-        
-        logger.info("E-Paper objektum létrehozása...")
-        epd = epd4in01f.EPD()
-        logger.info("E-Paper objektum sikeresen létrehozva")
-        
-        logger.info("Kijelző méretei: %d x %d", epd.width, epd.height)
-        
-        # Kijelző inicializálása
-        logger.info("Kijelző inicializálása...")
-        epd.init()
-        logger.info("Kijelző inicializálása sikeres")
-        
-        return epd
-    except Exception as e:
-        logger.error(f"Hiba a kijelző inicializálásakor: {e}")
-        logger.error(traceback.format_exc())
-        raise
+   try:
+       logger.info("epdconfig importálása...")
+       import epdconfig
+       logger.info("epdconfig sikeresen importálva")
+       
+       logger.info("epd4in01f importálása...")
+       import epd4in01f
+       logger.info("epd4in01f sikeresen importálva")
+       
+       logger.info("E-Paper objektum létrehozása...")
+       epd = epd4in01f.EPD()
+       logger.info("E-Paper objektum sikeresen létrehozva")
+       
+       logger.info("Kijelző méretei: %d x %d", epd.width, epd.height)
+       
+       # Kijelző inicializálása
+       logger.info("Kijelző inicializálása...")
+       epd.init()
+       logger.info("Kijelző inicializálása sikeres")
+       
+       return epd
+   except Exception as e:
+       logger.error(f"Hiba a kijelző inicializálásakor: {e}")
+       logger.error(traceback.format_exc())
+       raise
 
 def capture_webpage():
-    """Weboldal képernyőkép készítése különböző módszerekkel."""
-    try:
-        # Képernyőkép könyvtár létrehozása ha nem létezik
-        screenshot_dir = '/tmp/screenshot'
-        os.makedirs(screenshot_dir, exist_ok=True)
-        
-        # Képernyőkép fájl útvonala
-        screenshot_path = f"{screenshot_dir}/webpage.png"
-        
-        # Először a wkhtmltoimage-t próbáljuk
-        if os.path.exists("/usr/bin/wkhtmltoimage") or os.path.exists("/usr/local/bin/wkhtmltoimage"):
-            logger.info("wkhtmltoimage használata...")
-            command = f"xvfb-run -a wkhtmltoimage --width 640 --height 400 {WEBPAGE_URL} {screenshot_path}"
-            subprocess.run(command, shell=True, check=True)
-            return screenshot_path
-        
-        # Cutycapt mint tartalék
-        elif os.path.exists("/usr/bin/cutycapt") or os.path.exists("/usr/local/bin/cutycapt"):
-            logger.info("cutycapt használata...")
-            command = f"xvfb-run -a cutycapt --url={WEBPAGE_URL} --out={screenshot_path} --min-width=640 --min-height=400"
-            subprocess.run(command, shell=True, check=True)
-            return screenshot_path
-        
-        # Végső tartalék: Midori ha elérhető
-        elif os.path.exists("/usr/bin/midori"):
-            logger.info("Midori használata...")
-            display_num = 99
-            subprocess.run(f"Xvfb :{display_num} -screen 0 640x400x24 &", shell=True, check=True)
-            time.sleep(2)  # Időt adunk az Xvfb indulásához
-            
-            # Display környezeti változó beállítása
-            os.environ['DISPLAY'] = f":{display_num}"
-            
-            # Midori használata az oldal betöltéséhez és scrot a képernyőképhez
-            if os.path.exists("/usr/bin/scrot") or os.path.exists("/usr/local/bin/scrot"):
-                midori_proc = subprocess.Popen(
-                    f"midori --display=:{display_num} -e Fullscreen -a {WEBPAGE_URL}",
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                time.sleep(10)  # Várakozás az oldal betöltésére
-                subprocess.run(f"DISPLAY=:{display_num} scrot {screenshot_path}", shell=True, check=True)
-                midori_proc.terminate()
-                subprocess.run(f"pkill -f 'Xvfb :{display_num}'", shell=True)
-                return screenshot_path
-            else:
-                raise Exception("scrot nincs telepítve")
-        
-        else:
-            raise Exception("Nem található támogatott web képernyőkép készítő eszköz")
-            
-    except Exception as e:
-        logger.error(f"Hiba a weboldal képernyőkép készítésekor: {e}")
-        logger.error(traceback.format_exc())
-        # Próbáljuk megtisztítani a fennmaradt folyamatokat
-        try:
-            subprocess.run("pkill Xvfb", shell=True)
-            subprocess.run("pkill midori", shell=True)
-        except:
-            pass
-        return None
+   """Weboldal képernyőkép készítése különböző módszerekkel."""
+   try:
+       # Képernyőkép könyvtár létrehozása ha nem létezik
+       screenshot_dir = '/tmp/screenshot'
+       os.makedirs(screenshot_dir, exist_ok=True)
+       
+       # Képernyőkép fájl útvonala
+       screenshot_path = f"{screenshot_dir}/webpage.png"
+       
+       # Először a wkhtmltoimage-t próbáljuk
+       if os.path.exists("/usr/bin/wkhtmltoimage") or os.path.exists("/usr/local/bin/wkhtmltoimage"):
+           logger.info("wkhtmltoimage használata...")
+           command = f"xvfb-run -a wkhtmltoimage --width 640 --height 400 {WEBPAGE_URL} {screenshot_path}"
+           subprocess.run(command, shell=True, check=True)
+           return screenshot_path
+       
+       # Cutycapt mint tartalék
+       elif os.path.exists("/usr/bin/cutycapt") or os.path.exists("/usr/local/bin/cutycapt"):
+           logger.info("cutycapt használata...")
+           command = f"xvfb-run -a cutycapt --url={WEBPAGE_URL} --out={screenshot_path} --min-width=640 --min-height=400"
+           subprocess.run(command, shell=True, check=True)
+           return screenshot_path
+       
+       # Végső tartalék: Midori ha elérhető
+       elif os.path.exists("/usr/bin/midori"):
+           logger.info("Midori használata...")
+           display_num = 99
+           subprocess.run(f"Xvfb :{display_num} -screen 0 640x400x24 &", shell=True, check=True)
+           time.sleep(2)  # Időt adunk az Xvfb indulásához
+           
+           # Display környezeti változó beállítása
+           os.environ['DISPLAY'] = f":{display_num}"
+           
+           # Midori használata az oldal betöltéséhez és scrot a képernyőképhez
+           if os.path.exists("/usr/bin/scrot") or os.path.exists("/usr/local/bin/scrot"):
+               midori_proc = subprocess.Popen(
+                   f"midori --display=:{display_num} -e Fullscreen -a {WEBPAGE_URL}",
+                   shell=True,
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE
+               )
+               time.sleep(10)  # Várakozás az oldal betöltésére
+               subprocess.run(f"DISPLAY=:{display_num} scrot {screenshot_path}", shell=True, check=True)
+               midori_proc.terminate()
+               subprocess.run(f"pkill -f 'Xvfb :{display_num}'", shell=True)
+               return screenshot_path
+           else:
+               raise Exception("scrot nincs telepítve")
+       
+       else:
+           raise Exception("Nem található támogatott web képernyőkép készítő eszköz")
+           
+   except Exception as e:
+       logger.error(f"Hiba a weboldal képernyőkép készítésekor: {e}")
+       logger.error(traceback.format_exc())
+       # Próbáljuk megtisztítani a fennmaradt folyamatokat
+       try:
+           subprocess.run("pkill Xvfb", shell=True)
+           subprocess.run("pkill midori", shell=True)
+       except:
+           pass
+       return None
 
 def display_image(epd, image_path):
-    """Kép megjelenítése az e-paper kijelzőn."""
-    try:
-        image = Image.open(image_path)
-        
-        # Átméretezés a kijelző méretére
-        image = image.resize((epd.width, epd.height))
-        
-        # Megjelenítés az e-paper kijelzőn
-        logger.info("Kép megjelenítése a kijelzőn...")
-        epd.display(image)
-        logger.info("Kép sikeresen megjelenítve")
-        return True
-    except Exception as e:
-        logger.error(f"Hiba a kép megjelenítésekor: {e}")
-        logger.error(traceback.format_exc())
-        return False
+   """Kép megjelenítése az e-paper kijelzőn."""
+   try:
+       image = Image.open(image_path)
+       
+       # Átméretezés a kijelző méretére
+       image = image.resize((epd.width, epd.height))
+       
+       # Megjelenítés az e-paper kijelzőn
+       logger.info("Kép megjelenítése a kijelzőn...")
+       epd.display(image)
+       logger.info("Kép sikeresen megjelenítve")
+       return True
+   except Exception as e:
+       logger.error(f"Hiba a kép megjelenítésekor: {e}")
+       logger.error(traceback.format_exc())
+       return False
 
 def display_error_message(epd, message):
-    """Hibaüzenet megjelenítése a kijelzőn"""
-    try:
-        # Kép létrehozása
-        image = Image.new('RGB', (epd.width, epd.height), 'white')
-        draw = ImageDraw.Draw(image)
-        
-        # Betűtípus betöltése
-        font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-        if os.path.exists(font_path):
-            font_large = ImageFont.truetype(font_path, 30)
-            font_small = ImageFont.truetype(font_path, 20)
-        else:
-            # Ha nincs betűtípus, használjuk az alapértelmezettet
-            font_large = ImageFont.load_default()
-            font_small = ImageFont.load_default()
-        
-        # Hibaüzenet kirajzolása
-        draw.text((50, 50), 'HIBA!', fill='red', font=font_large)
-        
-        # Tördeljük a hibaüzenetet sorokra
-        words = message.split()
-        lines = []
-        line = ""
-        
-        for word in words:
-            test_line = line + " " + word if line else word
-            if len(test_line) * 10 <= epd.width - 100:  # egyszerű becslés a szélességre
-                line = test_line
-            else:
-                lines.append(line)
-                line = word
-        
-        if line:
-            lines.append(line)
-        
-        # Kirajzoljuk a sorokat
-        y = 100
-        for line in lines:
-            draw.text((50, y), line, fill='black', font=font_small)
-            y += 30
-        
-        # Kép megjelenítése
-        epd.display(image)
-        logger.info("Hibaüzenet sikeresen megjelenítve a kijelzőn")
-        return True
-    except Exception as e:
-        logger.error(f"Hiba a hibaüzenet megjelenítésekor: {e}")
-        logger.error(traceback.format_exc())
-        return False
+   """Hibaüzenet megjelenítése a kijelzőn"""
+   try:
+       # Kép létrehozása
+       image = Image.new('RGB', (epd.width, epd.height), 'white')
+       draw = ImageDraw.Draw(image)
+       
+       # Betűtípus betöltése
+       font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+       if os.path.exists(font_path):
+           font_large = ImageFont.truetype(font_path, 30)
+           font_small = ImageFont.truetype(font_path, 20)
+       else:
+           # Ha nincs betűtípus, használjuk az alapértelmezettet
+           font_large = ImageFont.load_default()
+           font_small = ImageFont.load_default()
+       
+       # Hibaüzenet kirajzolása
+       draw.text((50, 50), 'HIBA!', fill='red', font=font_large)
+       
+       # Tördeljük a hibaüzenetet sorokra
+       words = message.split()
+       lines = []
+       line = ""
+       
+       for word in words:
+           test_line = line + " " + word if line else word
+           if len(test_line) * 10 <= epd.width - 100:  # egyszerű becslés a szélességre
+               line = test_line
+           else:
+               lines.append(line)
+               line = word
+       
+       if line:
+           lines.append(line)
+       
+       # Kirajzoljuk a sorokat
+       y = 100
+       for line in lines:
+           draw.text((50, y), line, fill='black', font=font_small)
+           y += 30
+       
+       # Kép megjelenítése
+       epd.display(image)
+       logger.info("Hibaüzenet sikeresen megjelenítve a kijelzőn")
+       return True
+   except Exception as e:
+       logger.error(f"Hiba a hibaüzenet megjelenítésekor: {e}")
+       logger.error(traceback.format_exc())
+       return False
 
 def main():
-    try:
-        # Várakozás a hálózati kapcsolat elérhetőségére
-        if not wait_for_network():
-            logger.warning("Figyelmeztetés: Hálózat nem elérhető, offline mód aktiválva")
-        
-        # E-paper inicializálása
-        logger.info("E-paper kijelző inicializálása...")
-        epd = initialize_epd()
-        
-        # Üdvözlő üzenet megjelenítése
-        logger.info("Rendszer indulása, üdvözlő üzenet megjelenítése...")
-        try:
-            # Kép létrehozása
-            image = Image.new('RGB', (epd.width, epd.height), 'white')
-            draw = ImageDraw.Draw(image)
-            
-            # Betűtípus betöltése
-            font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-            if os.path.exists(font_path):
-                font_large = ImageFont.truetype(font_path, 30)
-                font_small = ImageFont.truetype(font_path, 20)
-            else:
-                # Ha nincs betűtípus, használjuk az alapértelmezettet
-                font_large = ImageFont.load_default()
-                font_small = ImageFont.load_default()
-            
-            # Szöveg kirajzolása
-            draw.text((epd.width//4, epd.height//3), '7-Színű E-Paper kijelző indul...', fill='blue', font=font_large)
-            draw.text((epd.width//4, epd.height//2), f'URL: {WEBPAGE_URL}', fill='red', font=font_small)
-            
-            # Kép megjelenítése
-            epd.display(image)
-            logger.info("Üdvözlő üzenet megjelenítve")
-            time.sleep(2)  # Rövid idő az üzenet olvasására
-        except Exception as e:
-            logger.error(f"Nem sikerült megjeleníteni az üdvözlő üzenetet: {e}")
-            logger.error(traceback.format_exc())
-        
-        # Frissítési kísérlet számláló
-        failed_attempts = 0
-        
-        # Fő ciklus
-        while True:
-            try:
-                logger.info("Weboldal képernyőkép készítése...")
-                screenshot = capture_webpage()
-                
-                if screenshot and os.path.exists(screenshot):
-                    logger.info("Megjelenítés az e-paper kijelzőn...")
-                    if display_image(epd, screenshot):
-                        logger.info("Megjelenítés sikeres")
-                        failed_attempts = 0  # Sikeres frissítés, nullázzuk a számlálót
-                    else:
-                        logger.error("Nem sikerült megjeleníteni a képet")
-                        failed_attempts += 1
-                        if failed_attempts >= 3:
-                            display_error_message(epd, "Nem sikerült megjeleníteni a képet háromszor egymás után.")
-                else:
-                    logger.error("Nem sikerült képernyőképet készíteni a weboldalról")
-                    failed_attempts += 1
-                    if failed_attempts >= 3:
-                        display_error_message(epd, "Nem sikerült képernyőképet készíteni a weboldalról háromszor egymás után.")
-            except Exception as e:
-                logger.error(f"Hiba a frissítési ciklusban: {e}")
-                logger.error(traceback.format_exc())
-                failed_attempts += 1
-                if failed_attempts >= 3:
-                    try:
-                        display_error_message(epd, f"Ismétlődő hiba: {str(e)[:50]}...")
-                    except:
-                        pass
-            
-            # Várakozás a következő frissítés előtt
-            logger.info("Várakozás 5 percig a következő frissítés előtt...")
-            time.sleep(300)
-            
-    except KeyboardInterrupt:
-        logger.info("Program leállítva a felhasználó által")
-        try:
-            epd.sleep()
-        except:
-            pass
-    except Exception as e:
-        logger.error(f"Nem várt hiba történt: {e}")
-        logger.error(traceback.format_exc())
-        # Várunk 30 másodpercet, majd újraindítjuk a programot
-        time.sleep(30)
-        main()  # Rekurzív újraindítás
+   try:
+       # Várakozás a hálózati kapcsolat elérhetőségére
+       if not wait_for_network():
+           logger.warning("Figyelmeztetés: Hálózat nem elérhető, offline mód aktiválva")
+       
+       # E-paper inicializálása
+       logger.info("E-paper kijelző inicializálása...")
+       epd = initialize_epd()
+       
+       # Üdvözlő üzenet megjelenítése
+       logger.info("Rendszer indulása, üdvözlő üzenet megjelenítése...")
+       try:
+           # Kép létrehozása
+           image = Image.new('RGB', (epd.width, epd.height), 'white')
+           draw = ImageDraw.Draw(image)
+           
+           # Betűtípus betöltése
+           font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+           if os.path.exists(font_path):
+               font_large = ImageFont.truetype(font_path, 30)
+               font_small = ImageFont.truetype(font_path, 20)
+           else:
+               # Ha nincs betűtípus, használjuk az alapértelmezettet
+               font_large = ImageFont.load_default()
+               font_small = ImageFont.load_default()
+           
+           # Szöveg kirajzolása
+           draw.text((epd.width//4, epd.height//3), '7-Színű 4.01" E-Paper kijelző', fill='blue', font=font_large)
+           draw.text((epd.width//4, epd.height//2), f'URL: {WEBPAGE_URL}', fill='red', font=font_small)
+           
+           # Kép megjelenítése
+           epd.display(image)
+           logger.info("Üdvözlő üzenet megjelenítve")
+           time.sleep(2)  # Rövid idő az üzenet olvasására
+       except Exception as e:
+           logger.error(f"Nem sikerült megjeleníteni az üdvözlő üzenetet: {e}")
+           logger.error(traceback.format_exc())
+       
+       # Frissítési kísérlet számláló
+       failed_attempts = 0
+       
+       # Fő ciklus
+       while True:
+           try:
+               logger.info("Weboldal képernyőkép készítése...")
+               screenshot = capture_webpage()
+               
+               if screenshot and os.path.exists(screenshot):
+                   logger.info("Megjelenítés az e-paper kijelzőn...")
+                   if display_image(epd, screenshot):
+                       logger.info("Megjelenítés sikeres")
+                       failed_attempts = 0  # Sikeres frissítés, nullázzuk a számlálót
+                   else:
+                       logger.error("Nem sikerült megjeleníteni a képet")
+                       failed_attempts += 1
+                       if failed_attempts >= 3:
+                           display_error_message(epd, "Nem sikerült megjeleníteni a képet háromszor egymás után.")
+               else:
+                   logger.error("Nem sikerült képernyőképet készíteni a weboldalról")
+                   failed_attempts += 1
+                   if failed_attempts >= 3:
+                       display_error_message(epd, "Nem sikerült képernyőképet készíteni a weboldalról háromszor egymás után.")
+           except Exception as e:
+               logger.error(f"Hiba a frissítési ciklusban: {e}")
+               logger.error(traceback.format_exc())
+               failed_attempts += 1
+               if failed_attempts >= 3:
+                   try:
+                       display_error_message(epd, f"Ismétlődő hiba: {str(e)[:50]}...")
+                   except:
+                       pass
+           
+           # Várakozás a következő frissítés előtt
+           logger.info("Várakozás 5 percig a következő frissítés előtt...")
+           time.sleep(300)
+           
+   except KeyboardInterrupt:
+       logger.info("Program leállítva a felhasználó által")
+       try:
+           epd.sleep()
+       except:
+           pass
+   except Exception as e:
+       logger.error(f"Nem várt hiba történt: {e}")
+       logger.error(traceback.format_exc())
+       # Várunk 30 másodpercet, majd újraindítjuk a programot
+       time.sleep(30)
+       main()  # Rekurzív újraindítás
 
 if __name__ == "__main__":
-    logger.info("Program indítása...")
-    
-    # Többszöri próbálkozás a program indítására
-    max_restart_attempts = 5
-    restart_attempts = 0
-    
-    while restart_attempts < max_restart_attempts:
-        try:
-            main()
-            break  # Ha sikeresen lefutott, kilépünk a ciklusból
-        except Exception as e:
-            restart_attempts += 1
-            logger.error(f"Program indítási hiba ({restart_attempts}/{max_restart_attempts}): {e}")
-            logger.error(traceback.format_exc())
-            
-            if restart_attempts >= max_restart_attempts:
-                logger.error("Túl sok újraindítási kísérlet, program leállítása.")
-                sys.exit(1)
-            
-            # Exponenciális várakozás az újraindítás előtt
-            wait_time = 30 * (2 ** (restart_attempts - 1))
-            logger.info(f"Újraindítás {wait_time} másodperc múlva...")
-            time.sleep(wait_time)
+   logger.info("Program indítása...")
+   
+   # Többszöri próbálkozás a program indítására
+   max_restart_attempts = 5
+   restart_attempts = 0
+   
+   while restart_attempts < max_restart_attempts:
+       try:
+           main()
+           break  # Ha sikeresen lefutott, kilépünk a ciklusból
+       except Exception as e:
+           restart_attempts += 1
+           logger.error(f"Program indítási hiba ({restart_attempts}/{max_restart_attempts}): {e}")
+           logger.error(traceback.format_exc())
+           
+           if restart_attempts >= max_restart_attempts:
+               logger.error("Túl sok újraindítási kísérlet, program leállítása.")
+               sys.exit(1)
+           
+           # Exponenciális várakozás az újraindítás előtt
+           wait_time = 30 * (2 ** (restart_attempts - 1))
+           logger.info(f"Újraindítás {wait_time} másodperc múlva...")
+           time.sleep(wait_time)
 EOF
 
 # Konfigurációs segédprogram létrehozása
@@ -921,26 +906,26 @@ import re
 config_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), "display_webpage.py")
 
 def update_url(new_url):
-    with open(config_file, 'r') as f:
-        content = f.read()
-    
-    # URL frissítése a fájlban
-    pattern = r'WEBPAGE_URL = ".*?"'
-    content = re.sub(pattern, f'WEBPAGE_URL = "{new_url}"', content)
-    
-    with open(config_file, 'w') as f:
-        f.write(content)
-    
-    print(f"URL frissítve: {new_url}")
-    print("Kérlek indítsd újra a szolgáltatást: sudo systemctl restart epaper-display.service")
+   with open(config_file, 'r') as f:
+       content = f.read()
+   
+   # URL frissítése a fájlban
+   pattern = r'WEBPAGE_URL = ".*?"'
+   content = re.sub(pattern, f'WEBPAGE_URL = "{new_url}"', content)
+   
+   with open(config_file, 'w') as f:
+       f.write(content)
+   
+   print(f"URL frissítve: {new_url}")
+   print("Kérlek indítsd újra a szolgáltatást: sudo systemctl restart epaper-display.service")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Használat: python3 configure.py <URL>")
-        sys.exit(1)
-    
-    new_url = sys.argv[1]
-    update_url(new_url)
+   if len(sys.argv) != 2:
+       print("Használat: python3 configure.py <URL>")
+       sys.exit(1)
+   
+   new_url = sys.argv[1]
+   update_url(new_url)
 EOF
 
 # Jogosultságok beállítása a szkriptekhez
@@ -965,7 +950,7 @@ sudo chown $CURRENT_USER:$CURRENT_USER /var/log/epaper-test.log
 echo "Systemd szolgáltatás létrehozása..." | tee -a "$LOG_FILE"
 cat > /tmp/epaper-display.service << EOF
 [Unit]
-Description=7-Színű E-Paper Weboldal Megjelenítő
+Description=7-Színű 4.01 inch E-Paper Weboldal Megjelenítő
 After=network-online.target
 Wants=network-online.target
 DefaultDependencies=no
@@ -1008,25 +993,25 @@ sudo chmod +x /usr/local/bin/epaper-config 2>> "$LOG_FILE"
 cat > /tmp/epaper-service << EOF
 #!/bin/bash
 case "\$1" in
-    start)
-        sudo systemctl start epaper-display.service
-        ;;
-    stop)
-        sudo systemctl stop epaper-display.service
-        ;;
-    restart)
-        sudo systemctl restart epaper-display.service
-        ;;
-    status)
-        sudo systemctl status epaper-display.service
-        ;;
-    test)
-        sudo $INSTALL_DIR/test_7color_display.py
-        ;;
-    *)
-        echo "Használat: epaper-service {start|stop|restart|status|test}"
-        exit 1
-        ;;
+   start)
+       sudo systemctl start epaper-display.service
+       ;;
+   stop)
+       sudo systemctl stop epaper-display.service
+       ;;
+   restart)
+       sudo systemctl restart epaper-display.service
+       ;;
+   status)
+       sudo systemctl status epaper-display.service
+       ;;
+   test)
+       sudo $INSTALL_DIR/test_7color_display.py
+       ;;
+   *)
+       echo "Használat: epaper-service {start|stop|restart|status|test}"
+       exit 1
+       ;;
 esac
 EOF
 
@@ -1037,28 +1022,28 @@ sudo chmod +x /usr/local/bin/epaper-service 2>> "$LOG_FILE"
 cat > /tmp/epaper-logs << EOF
 #!/bin/bash
 case "\$1" in
-    service)
-        sudo journalctl -u epaper-display.service -f
-        ;;
-    app)
-        sudo tail -f /var/log/epaper-display.log
-        ;;
-    stdout)
-        sudo tail -f /var/log/epaper-display-stdout.log
-        ;;
-    stderr)
-        sudo tail -f /var/log/epaper-display-stderr.log
-        ;;
-    test)
-        sudo tail -f /var/log/epaper-test.log
-        ;;
-    all)
-        sudo tail -f /var/log/epaper-display*.log /var/log/epaper-test.log
-        ;;
-    *)
-        echo "Használat: epaper-logs {service|app|stdout|stderr|test|all}"
-        exit 1
-        ;;
+   service)
+       sudo journalctl -u epaper-display.service -f
+       ;;
+   app)
+       sudo tail -f /var/log/epaper-display.log
+       ;;
+   stdout)
+       sudo tail -f /var/log/epaper-display-stdout.log
+       ;;
+   stderr)
+       sudo tail -f /var/log/epaper-display-stderr.log
+       ;;
+   test)
+       sudo tail -f /var/log/epaper-test.log
+       ;;
+   all)
+       sudo tail -f /var/log/epaper-display*.log /var/log/epaper-test.log
+       ;;
+   *)
+       echo "Használat: epaper-logs {service|app|stdout|stderr|test|all}"
+       exit 1
+       ;;
 esac
 EOF
 
@@ -1070,8 +1055,8 @@ echo "Eltávolító szkript létrehozása..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/uninstall.sh" << EOF
 #!/bin/bash
 
-# uninstall.sh - Eltávolító szkript 7-színű e-paper weblap megjelenítőhöz
-# Frissítve: 2025.05.13
+# uninstall.sh - Eltávolító szkript 7-színű 4.01 inch e-paper weblap megjelenítőhöz
+# Frissítve: 2025.05.14
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="uninstall_log.txt"
@@ -1083,16 +1068,16 @@ echo "Aktuális felhasználó: \$CURRENT_USER" | tee -a "\$LOG_FILE"
 
 # Hibakezelő függvény
 handle_error() {
-    echo "HIBA: \$1" | tee -a "\$LOG_FILE"
-    echo "További részletek: \$LOG_FILE"
-    exit 1
+   echo "HIBA: \$1" | tee -a "\$LOG_FILE"
+   echo "További részletek: \$LOG_FILE"
+   exit 1
 }
 
 # Sikeres végrehajtás ellenőrzése
 check_success() {
-    if [ \$? -ne 0 ]; then
-        handle_error "\$1"
-    fi
+   if [ \$? -ne 0 ]; then
+       handle_error "\$1"
+   fi
 }
 
 # Telepítési könyvtár
@@ -1102,30 +1087,30 @@ VENV_DIR="\${INSTALL_DIR}/venv"
 # Szolgáltatás leállítása és letiltása
 echo "Szolgáltatás leállítása és letiltása..." | tee -a "\$LOG_FILE"
 if systemctl is-active --quiet epaper-display.service; then
-    sudo systemctl stop epaper-display.service 2>> "\$LOG_FILE"
-    check_success "Nem sikerült leállítani a szolgáltatást"
+   sudo systemctl stop epaper-display.service 2>> "\$LOG_FILE"
+   check_success "Nem sikerült leállítani a szolgáltatást"
 fi
 
 if systemctl is-enabled --quiet epaper-display.service 2>/dev/null; then
-    sudo systemctl disable epaper-display.service 2>> "\$LOG_FILE"
-    check_success "Nem sikerült letiltani a szolgáltatást"
+   sudo systemctl disable epaper-display.service 2>> "\$LOG_FILE"
+   check_success "Nem sikerült letiltani a szolgáltatást"
 fi
 
 # Szolgáltatásfájl eltávolítása
 echo "Szolgáltatásfájl eltávolítása..." | tee -a "\$LOG_FILE"
 if [ -f /etc/systemd/system/epaper-display.service ]; then
-    sudo rm /etc/systemd/system/epaper-display.service 2>> "\$LOG_FILE"
-    check_success "Nem sikerült eltávolítani a szolgáltatásfájlt"
-    sudo systemctl daemon-reload 2>> "\$LOG_FILE"
+   sudo rm /etc/systemd/system/epaper-display.service 2>> "\$LOG_FILE"
+   check_success "Nem sikerült eltávolítani a szolgáltatásfájlt"
+   sudo systemctl daemon-reload 2>> "\$LOG_FILE"
 fi
 
 # Kényelmi szkriptek eltávolítása
 echo "Kényelmi szkriptek eltávolítása..." | tee -a "\$LOG_FILE"
 for script in epaper-config epaper-service epaper-logs; do
-    if [ -f /usr/local/bin/\$script ]; then
-        sudo rm /usr/local/bin/\$script 2>> "\$LOG_FILE"
-        check_success "Nem sikerült eltávolítani a(z) \$script szkriptet"
-    fi
+   if [ -f /usr/local/bin/\$script ]; then
+       sudo rm /usr/local/bin/\$script 2>> "\$LOG_FILE"
+       check_success "Nem sikerült eltávolítani a(z) \$script szkriptet"
+   fi
 done
 
 # Log fájlok eltávolítása
@@ -1137,15 +1122,15 @@ echo "Log fájlok eltávolítva" | tee -a "\$LOG_FILE"
 # Telepítési könyvtár eltávolítása (beleértve a virtuális környezetet is)
 echo "Telepítési könyvtár eltávolítása..." | tee -a "\$LOG_FILE"
 if [ -d "\$INSTALL_DIR" ]; then
-    echo "Virtuális környezet eltávolítása (ha létezik): \$VENV_DIR" | tee -a "\$LOG_FILE"
-    # A virtuális környezet külön törlése
-    if [ -d "\$VENV_DIR" ]; then
-        sudo rm -rf "\$VENV_DIR" 2>> "\$LOG_FILE" || true
-    fi
-    
-    # Ezután a teljes telepítési könyvtár törlése
-    sudo rm -rf "\$INSTALL_DIR" 2>> "\$LOG_FILE"
-    check_success "Nem sikerült eltávolítani a telepítési könyvtárat"
+   echo "Virtuális környezet eltávolítása (ha létezik): \$VENV_DIR" | tee -a "\$LOG_FILE"
+   # A virtuális környezet külön törlése
+   if [ -d "\$VENV_DIR" ]; then
+       sudo rm -rf "\$VENV_DIR" 2>> "\$LOG_FILE" || true
+   fi
+   
+   # Ezután a teljes telepítési könyvtár törlése
+   sudo rm -rf "\$INSTALL_DIR" 2>> "\$LOG_FILE"
+   check_success "Nem sikerült eltávolítani a telepítési könyvtárat"
 fi
 
 # Futó háttérfolyamatok leállítása
@@ -1161,10 +1146,10 @@ sudo pkill -f "cutycapt" 2>/dev/null || true
 # Ideiglenes könyvtárak tisztítása
 echo "Ideiglenes könyvtárak tisztítása..." | tee -a "\$LOG_FILE"
 if [ -d "/tmp/screenshot" ]; then
-    sudo rm -rf /tmp/screenshot 2>> "\$LOG_FILE" || true
+   sudo rm -rf /tmp/screenshot 2>> "\$LOG_FILE" || true
 fi
 if [ -d "/tmp/waveshare-install" ]; then
-    sudo rm -rf /tmp/waveshare-install 2>> "\$LOG_FILE" || true
+   sudo rm -rf /tmp/waveshare-install 2>> "\$LOG_FILE" || true
 fi
 
 # SPI letiltásának kérdezése
@@ -1172,14 +1157,14 @@ echo "Le szeretnéd tiltani az SPI interfészt? (y/n)"
 read disable_spi
 
 if [ "\$disable_spi" = "y" ] || [ "\$disable_spi" = "Y" ]; then
-    echo "SPI interfész letiltása..." | tee -a "\$LOG_FILE"
-    sudo sed -i '/dtparam=spi=on/d' /boot/config.txt 2>> "\$LOG_FILE"
-    check_success "Nem sikerült letiltani az SPI interfészt"
-    echo "SPI interfész letiltva. A változás érvénybe lépéséhez újraindítás szükséges." | tee -a "\$LOG_FILE"
-    REBOOT_REQUIRED=true
+   echo "SPI interfész letiltása..." | tee -a "\$LOG_FILE"
+   sudo sed -i '/dtparam=spi=on/d' /boot/config.txt 2>> "\$LOG_FILE"
+   check_success "Nem sikerült letiltani az SPI interfészt"
+   echo "SPI interfész letiltva. A változás érvénybe lépéséhez újraindítás szükséges." | tee -a "\$LOG_FILE"
+   REBOOT_REQUIRED=true
 else
-    echo "SPI interfész engedélyezve marad." | tee -a "\$LOG_FILE"
-    REBOOT_REQUIRED=false
+   echo "SPI interfész engedélyezve marad." | tee -a "\$LOG_FILE"
+   REBOOT_REQUIRED=false
 fi
 
 # Összefoglaló
@@ -1193,9 +1178,9 @@ echo "Eltávolított szkriptek: epaper-config, epaper-service, epaper-logs" | te
 echo "Eltávolított logfájlok: /var/log/epaper-display*.log, /var/log/epaper-test.log" | tee -a "\$LOG_FILE"
 
 if [ "\$REBOOT_REQUIRED" = true ]; then
-    echo "" | tee -a "\$LOG_FILE"
-    echo "Az eltávolítás befejezéséhez ÚJRAINDÍTÁS SZÜKSÉGES." | tee -a "\$LOG_FILE"
-    echo "Kérlek indítsd újra a Raspberry Pi-t: sudo reboot" | tee -a "\$LOG_FILE"
+   echo "" | tee -a "\$LOG_FILE"
+   echo "Az eltávolítás befejezéséhez ÚJRAINDÍTÁS SZÜKSÉGES." | tee -a "\$LOG_FILE"
+   echo "Kérlek indítsd újra a Raspberry Pi-t: sudo reboot" | tee -a "\$LOG_FILE"
 fi
 
 echo "" | tee -a "\$LOG_FILE"
@@ -1207,13 +1192,19 @@ EOF
 chmod +x "$INSTALL_DIR/uninstall.sh" 2>> "$LOG_FILE"
 
 # Teszt szkript futtatása
-echo "Teszt szkript futtatása a 7-színű kijelző ellenőrzéséhez..." | tee -a "$LOG_FILE"
-echo "A teszt kiírja a kijelzőre, hogy '7-színű E-Paper teszt'"
-"$INSTALL_DIR/test_7color_display.py"
+echo "Teszt szkript futtatása a 7-színű 4.01 inch kijelző ellenőrzéséhez..." | tee -a "$LOG_FILE"
+"$INSTALL_DIR/test_7color_display.py" || {
+   echo "A tesztprogram nem futott le sikeresen, ellenőrizd a /var/log/epaper-test.log fájlt" | tee -a "$LOG_FILE"
+}
 
 # URL bekérése
-echo "Kérlek add meg az URL-t, amit meg szeretnél jeleníteni:"
+echo "Kérlek add meg az URL-t, amit meg szeretnél jeleníteni (alapértelmezett: http://naptarak.com/e-paper.html):"
 read url
+
+if [ -z "$url" ]; then
+   url="http://naptarak.com/e-paper.html"
+fi
+
 "$VENV_DIR/bin/python3" "$INSTALL_DIR/configure.py" "$url" 2>> "$LOG_FILE"
 check_success "Nem sikerült konfigurálni az URL-t"
 
@@ -1228,16 +1219,25 @@ echo "A teszt sikeresen lefutott? (y/n)"
 read test_success
 
 if [ "$test_success" = "y" ] || [ "$test_success" = "Y" ]; then
-    echo "Szolgáltatás indítása..." | tee -a "$LOG_FILE"
-    sudo systemctl start epaper-display.service 2>> "$LOG_FILE"
-    if [ $? -ne 0 ]; then
-        echo "Figyelmeztetés: Nem sikerült elindítani a szolgáltatást." | tee -a "$LOG_FILE"
-        echo "A szolgáltatás állapota:" | tee -a "$LOG_FILE"
-        sudo systemctl status epaper-display.service | tee -a "$LOG_FILE"
-    fi
+   echo "Szolgáltatás indítása..." | tee -a "$LOG_FILE"
+   sudo systemctl start epaper-display.service 2>> "$LOG_FILE"
+   if [ $? -ne 0 ]; then
+       echo "Figyelmeztetés: Nem sikerült elindítani a szolgáltatást." | tee -a "$LOG_FILE"
+       echo "A szolgáltatás állapota:" | tee -a "$LOG_FILE"
+       sudo systemctl status epaper-display.service | tee -a "$LOG_FILE"
+   fi
 else
-    echo "A szolgáltatás nem lett elindítva. Kérem ellenőrizze a kijelző beállításait." | tee -a "$LOG_FILE"
-    echo "Manuálisan elindíthatja később: sudo systemctl start epaper-display.service" | tee -a "$LOG_FILE"
+   echo "A szolgáltatás nem lett elindítva. Kérem ellenőrizze a kijelző beállításait." | tee -a "$LOG_FILE"
+   echo "Manuálisan elindíthatja később: sudo systemctl start epaper-display.service" | tee -a "$LOG_FILE"
+fi
+
+# GPIO jogosultságok beállítása
+echo "GPIO és SPI jogosultságok beállítása..." | tee -a "$LOG_FILE"
+if getent group gpio >/dev/null; then
+   sudo usermod -a -G gpio $CURRENT_USER 2>> "$LOG_FILE" || true
+fi
+if getent group spi >/dev/null; then
+   sudo usermod -a -G spi $CURRENT_USER 2>> "$LOG_FILE" || true
 fi
 
 # Összefoglaló
@@ -1247,6 +1247,8 @@ echo "=====================" | tee -a "$LOG_FILE"
 echo "Telepítési könyvtár: $INSTALL_DIR" | tee -a "$LOG_FILE"
 echo "Virtuális környezet: $VENV_DIR" | tee -a "$LOG_FILE"
 echo "Felhasználó: $CURRENT_USER" | tee -a "$LOG_FILE"
+echo "Kijelző: 7-színű 4.01 inch (640x400) e-Paper" | tee -a "$LOG_FILE"
+echo "Weboldal URL: $url" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 echo "Parancssori eszközök:" | tee -a "$LOG_FILE"
 echo "  epaper-config <url> - URL beállítása" | tee -a "$LOG_FILE"
@@ -1258,15 +1260,16 @@ echo "  sudo $INSTALL_DIR/uninstall.sh" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
 echo "Hibaelhárítási tippek:" | tee -a "$LOG_FILE"
-echo "  1. Logok megtekintése: epaper-logs test" | tee -a "$LOG_FILE"
+echo "  1. Logok megtekintése: epaper-logs test vagy epaper-logs app" | tee -a "$LOG_FILE"
 echo "  2. Szolgáltatás újraindítása: epaper-service restart" | tee -a "$LOG_FILE"
 echo "  3. Teszt újrafuttatása: epaper-service test" | tee -a "$LOG_FILE"
 echo "  4. URL módosítása: epaper-config http://uj-url.hu" | tee -a "$LOG_FILE"
+echo "  5. GPIO/SPI jogosultságok: sudo usermod -a -G gpio,spi $CURRENT_USER" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
 if [ "$REBOOT_REQUIRED" = true ]; then
-    echo "A telepítés befejezéséhez ÚJRAINDÍTÁS SZÜKSÉGES." | tee -a "$LOG_FILE"
-    echo "Kérlek indítsd újra a Raspberry Pi-t: sudo reboot" | tee -a "$LOG_FILE"
+   echo "A telepítés befejezéséhez ÚJRAINDÍTÁS SZÜKSÉGES." | tee -a "$LOG_FILE"
+   echo "Kérlek indítsd újra a Raspberry Pi-t: sudo reboot" | tee -a "$LOG_FILE"
 fi
 
 echo "Telepítés befejezve: $(date)" | tee -a "$LOG_FILE"
