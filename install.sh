@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# install_7color_optimized.sh - Optimalizált telepítő szkript 7-színű Waveshare 4.01 inch HAT (F) kijelzőhöz
+# install_7color_4in01f_fixed.sh - Finomhangolt telepítő szkript Waveshare 4.01 inch HAT (F) 7-színű e-paper kijelzőhöz
 # Készítve: 2025.05.14
 
 set -e  # Kilépés hiba esetén
 LOG_FILE="install_7color_log.txt"
-echo "Optimalizált 7-színű e-Paper 4.01 inch telepítés indítása: $(date)" | tee -a "$LOG_FILE"
+echo "Finomhangolt 7-színű e-Paper 4.01 inch telepítés indítása: $(date)" | tee -a "$LOG_FILE"
 
 # Aktuális felhasználó azonosítása
 CURRENT_USER=$(whoami)
@@ -98,8 +98,6 @@ echo "Python pip frissítése a virtuális környezetben..." | tee -a "$LOG_FILE
 "$VENV_DIR/bin/pip" install --upgrade pip 2>> "$LOG_FILE"
 check_success "Nem sikerült frissíteni a pip-et"
 
-# FONTOS: NEM telepítjük a NumPy-t és egyéb nehéz csomagokat, helyette a rendszerszintűt használjuk
-
 # Könyvtárstruktúra létrehozása
 echo "Könyvtárstruktúra létrehozása..." | tee -a "$LOG_FILE"
 mkdir -p "$INSTALL_DIR/lib/waveshare_epd" 2>> "$LOG_FILE"
@@ -120,11 +118,12 @@ else
     REBOOT_REQUIRED=false
 fi
 
-# Speciális epdconfig.py modul létrehozása 7-színű 4.01 inch e-Paper kijelzőhöz
-echo "epdconfig.py létrehozása a 7-színű 4.01 inch kijelzőhöz..." | tee -a "$LOG_FILE"
+# Speciális epdconfig.py modul létrehozása az eredeti Waveshare pinek szerint
+echo "epdconfig.py létrehozása a hivatalos Waveshare pinekkel..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/lib/waveshare_epd/epdconfig.py" << EOF
 #!/usr/bin/python
 # -*- coding:utf-8 -*-
+# Waveshare hivatalos epdconfig
 
 import os
 import logging
@@ -132,6 +131,7 @@ import sys
 import time
 
 # GPIO Pin definíciók a 7-színű 4.01 inch kijelzőhöz
+# A Waveshare hivatalos dokumentációja alapján
 RST_PIN = 17
 DC_PIN = 25
 CS_PIN = 8
@@ -139,10 +139,13 @@ BUSY_PIN = 24
 
 class RaspberryPi:
     def __init__(self):
-        import RPi.GPIO
-        import spidev
-        self.GPIO = RPi.GPIO
-        self.SPI = spidev.SpiDev()
+        try:
+            import RPi.GPIO
+            import spidev
+            self.GPIO = RPi.GPIO
+            self.SPI = spidev.SpiDev()
+        except ImportError as e:
+            raise ImportError("RPi.GPIO vagy spidev importálási hiba: {}".format(e))
 
     def digital_write(self, pin, value):
         self.GPIO.output(pin, value)
@@ -160,68 +163,77 @@ class RaspberryPi:
         self.SPI.writebytes2(data)
 
     def module_init(self):
+        logging.debug("GPIO mode BCM")
         self.GPIO.setmode(self.GPIO.BCM)
         self.GPIO.setwarnings(False)
+        
+        logging.debug("GPIO setup")
         self.GPIO.setup(RST_PIN, self.GPIO.OUT)
         self.GPIO.setup(DC_PIN, self.GPIO.OUT)
         self.GPIO.setup(CS_PIN, self.GPIO.OUT)
         self.GPIO.setup(BUSY_PIN, self.GPIO.IN)
         
-        # SPI eszköz inicializálása
+        logging.debug("SPI setup")
         self.SPI.open(0, 0)
-        self.SPI.max_speed_hz = 4000000
+        # Fontos: Sebességcsökkentés a stabil működéshez
+        self.SPI.max_speed_hz = 2000000
         self.SPI.mode = 0b00
         return 0
 
     def module_exit(self):
-        logging.debug("spi end")
+        logging.debug("SPI close")
         self.SPI.close()
+        
+        logging.debug("GPIO cleanup")
         self.GPIO.output(RST_PIN, 0)
         self.GPIO.output(DC_PIN, 0)
+        self.GPIO.output(CS_PIN, 0)
+
         self.GPIO.cleanup([RST_PIN, DC_PIN, CS_PIN, BUSY_PIN])
 
-# Raspberry Pi inicializálása
+# Csak Raspberry Pi implementáció
 implementation = RaspberryPi()
 
-# Függvények exportálása modulszintre
+# Függvények exportálása
 for func in [x for x in dir(implementation) if not x.startswith('_')]:
     setattr(sys.modules[__name__], func, getattr(implementation, func))
 
-# Pin konstansok exportálása
+# Konstansok
 BUSY_PIN = 24
 RST_PIN = 17
 DC_PIN = 25
 CS_PIN = 8
 EOF
 
-# Speciális epd4in01f.py modul létrehozása a 7-színű 4.01 inch kijelzőhöz
-echo "epd4in01f.py létrehozása a 7-színű 4.01 inch kijelzőhöz..." | tee -a "$LOG_FILE"
+# Speciális epd4in01f.py modul létrehozása a finomított működéssel
+echo "A precíz epd4in01f.py létrehozása a 7-színű 4.01 inch kijelzőhöz..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/lib/waveshare_epd/epd4in01f.py" << EOF
 #!/usr/bin/python
 # -*- coding:utf-8 -*-
+# A Waveshare 4.01inch 7-Color E-Ink HAT driver - Finomhangolt, optimalizált
 
 import logging
 import time
 from PIL import Image
 
-# epdconfig
+# epdconfig importálása
 import epdconfig
 
 class EPD:
-    # Waveshare 4.01 inch 7-Color e-Paper felbontása
+    # 4.01 inch 7-Color kijelző specifikációi
     WIDTH = 640
     HEIGHT = 400
     
-    # A 7 szín definíciói
-    BLACK = 0x000000
-    WHITE = 0xffffff
-    GREEN = 0x00ff00
-    BLUE = 0x0000ff
-    RED = 0xff0000
-    YELLOW = 0xffff00
-    ORANGE = 0xffa500
+    # Definiáljuk a 7 színt
+    BLACK = 0x00     # 0
+    WHITE = 0x01     # 1
+    GREEN = 0x02     # 2
+    BLUE = 0x03      # 3
+    RED = 0x04       # 4
+    YELLOW = 0x05    # 5
+    ORANGE = 0x06    # 6
     
-    # Parancs konstansok
+    # Specifikus parancs konstansok a tényleges Waveshare 4.01inch 7-Color kijelzőhöz
     PANEL_SETTING = 0x00
     POWER_SETTING = 0x01
     POWER_OFF = 0x02
@@ -234,8 +246,21 @@ class EPD:
     DATA_STOP = 0x11
     DISPLAY_REFRESH = 0x12
     DATA_START_TRANSMISSION_2 = 0x13
+    LUT_FOR_VCOM = 0x20
+    LUT_BLUE = 0x21
+    LUT_WHITE = 0x22
+    LUT_GRAY_1 = 0x23
+    LUT_GRAY_2 = 0x24
+    LUT_RED_0 = 0x25
+    LUT_RED_1 = 0x26
+    LUT_RED_2 = 0x27
+    LUT_RED_3 = 0x28
+    LUT_XON = 0x29
     PLL_CONTROL = 0x30
-    TEMPERATURE_CALIBRATION = 0x40
+    TEMPERATURE_SENSOR_COMMAND = 0x40
+    TEMPERATURE_CALIBRATION = 0x41
+    TEMPERATURE_SENSOR_WRITE = 0x42
+    TEMPERATURE_SENSOR_READ = 0x43
     VCOM_AND_DATA_INTERVAL_SETTING = 0x50
     LOW_POWER_DETECTION = 0x51
     TCON_SETTING = 0x60
@@ -249,173 +274,319 @@ class EPD:
     def __init__(self):
         self.width = self.WIDTH
         self.height = self.HEIGHT
-        self.colors = {
-            0: self.BLACK,
-            1: self.WHITE,
-            2: self.GREEN,
-            3: self.BLUE,
-            4: self.RED,
-            5: self.YELLOW,
-            6: self.ORANGE
-        }
+        self.reset_count = 0
+        
+    def digital_write(self, pin, value):
+        return epdconfig.digital_write(pin, value)
+        
+    def digital_read(self, pin):
+        return epdconfig.digital_read(pin)
+        
+    def delay_ms(self, delaytime):
+        return epdconfig.delay_ms(delaytime)
+        
+    def send_command(self, command):
+        self.digital_write(epdconfig.DC_PIN, 0)
+        self.digital_write(epdconfig.CS_PIN, 0)
+        epdconfig.spi_writebyte([command])
+        self.digital_write(epdconfig.CS_PIN, 1)
+        
+    def send_data(self, data):
+        self.digital_write(epdconfig.DC_PIN, 1)
+        self.digital_write(epdconfig.CS_PIN, 0)
+        epdconfig.spi_writebyte([data])
+        self.digital_write(epdconfig.CS_PIN, 1)
+        
+    def reset(self):
+        """Gondos, többszörös reset a megbízható inicializálásért"""
+        self.reset_count += 1
+        logging.debug(f"Kijelző reset ({self.reset_count}. próba)...")
+        
+        # Teljes reset ciklus a megbízható inicializáláshoz
+        self.digital_write(epdconfig.RST_PIN, 1)
+        self.delay_ms(200)
+        self.digital_write(epdconfig.RST_PIN, 0)
+        self.delay_ms(2)  # kritikus: >1ms legyen
+        self.digital_write(epdconfig.RST_PIN, 1)
+        self.delay_ms(200)  # Fontos: elegendő idő a stabil inicializáláshoz
+        
+    def wait_until_idle(self):
+        """Gondos, időlimites busy-jel várás"""
+        logging.debug("Várakozás a kijelző BUSY jelére...")
+        start_time = time.time()
+        timeout = 30  # 30 másodperc timeout
+        
+        # Várunk amíg a BUSY jel inaktív (1) lesz
+        while self.digital_read(epdconfig.BUSY_PIN) == 0:
+            self.delay_ms(10)  # Rövid várakozás
+            if time.time() - start_time > timeout:
+                logging.warning("BUSY jel timeout! Folytatás...")
+                # Nincs raise, hogy az újrapróbálkozás lehetséges legyen
+                break
+                
+        logging.debug("BUSY jel elengedve vagy timeout")
         
     def init(self):
-        logging.debug("Waveshare 4.01 inch 7-Color e-Paper inicializálása")
+        """Gondos inicializálás a 7-színű kijelzőhöz"""
         if epdconfig.module_init() != 0:
             return -1
+            
+        logging.debug("Waveshare 4.01 inch 7-Color E-Paper inicializálása")
         
-        # E-Paper kijelző inicializálása
-        self.reset()
+        # Újrapróbálkozási logika
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                # Reset a kijelzőnek
+                self.reset()
+                
+                # Inicializációs parancssorozat
+                # A parancsok a hivatalos Waveshare kódból származnak
+                
+                # Power beállítás
+                self.send_command(self.POWER_SETTING)
+                self.send_data(0x07)  # VGH=20V, VGL=-20V
+                self.send_data(0x07)  # VGH=20V, VGL=-20V
+                self.send_data(0x3f)  # VDH=15V
+                self.send_data(0x3f)  # VDL=-15V
+                
+                # Bekapcsolás
+                self.send_command(self.POWER_ON)
+                self.delay_ms(100)
+                self.wait_until_idle()
+                
+                # Boost soft start
+                self.send_command(self.BOOSTER_SOFT_START)
+                self.send_data(0x17)
+                self.send_data(0x17)
+                self.send_data(0x17)
+                
+                # Panel beállítás - kulcsfontosságú
+                self.send_command(self.PANEL_SETTING)
+                self.send_data(0x0F)  # KW-3f KWR-2F BWROTP-0f BWOTP-1f
+                
+                # PLL vezérlés a tiszta képhez
+                self.send_command(self.PLL_CONTROL)
+                self.send_data(0x06)  # 100Hz
+                
+                # Felbontás beállítása - PONTOS 640x400 érték
+                self.send_command(self.RESOLUTION_SETTING)
+                self.send_data(0x02)  # 640 (high byte)
+                self.send_data(0x80)  # 640 (low byte)
+                self.send_data(0x01)  # 400 (high byte)
+                self.send_data(0x90)  # 400 (low byte)
+                
+                # VCM_DC beállítás a tisztább képhez
+                self.send_command(self.VCM_DC_SETTING)
+                self.send_data(0x12)
+                
+                # VCOM és adat intervallum beállítása
+                self.send_command(self.VCOM_AND_DATA_INTERVAL_SETTING)
+                self.send_data(0x11)
+                self.send_data(0x07)
+                
+                # TCON beállítás, kritikus a jó képhez
+                self.send_command(self.TCON_SETTING)
+                self.send_data(0x22)
+                
+                # Sikeres init
+                logging.info("4.01 inch 7-színű E-Paper sikeres inicializálás")
+                return 0
+                
+            except Exception as e:
+                logging.error(f"Inicializálási hiba: {e} - próba {attempt+1}/{max_attempts}")
+                if attempt == max_attempts - 1:
+                    logging.error("Sikertelen inicializálás!")
+                    return -1
+                self.delay_ms(1000)  # 1mp várakozás az újrapróbálkozás előtt
+                continue
+                
+        return -1  # Ha ide jutottunk, sikertelen az init
         
-        # Power Settings
-        self.send_command(self.POWER_SETTING)
-        self.send_data(0x07)  # VGH&VGL setting
-        self.send_data(0x07)  # VGH=20V, VGL=-20V
-        self.send_data(0x3f)  # VDH=15V
-        self.send_data(0x3f)  # VDL=-15V
+    def _set_pixmap_to_command(self, command):
+        """Teljes pixeltérkép küldése adott paranccsal"""
+        self.send_command(command)
         
-        # POWER ON bekapcsolás
-        self.send_command(self.POWER_ON)
-        time.sleep(0.1)
-        self.wait_until_idle()
+        # Váltakozó sorminta küldése (gyorsabb és stabilabb átvitel)
+        for j in range(0, self.HEIGHT, 2):
+            for i in range(0, self.WIDTH):
+                # Alapértelmezetten fehér
+                self.send_data(self.WHITE)
+            for i in range(0, self.WIDTH):
+                # Alapértelmezetten fehér
+                self.send_data(self.WHITE)
+                
+    def get_color_value(self, pixel):
+        """RGB színek leképezése a 7-színű palettára hatékonyan"""
+        r, g, b = pixel
         
-        # Panel beállítás
-        self.send_command(self.PANEL_SETTING)
-        self.send_data(0x0F)  # KW-3f KWR-2F BWROTP-0f BWOTP-1f
+        if r <= 10 and g <= 10 and b <= 10:  # Fekete
+            return self.BLACK
+        elif r >= 245 and g >= 245 and b >= 245:  # Fehér
+            return self.WHITE
+        elif r >= 220 and g <= 35 and b <= 35:  # Piros
+            return self.RED
+        elif r <= 35 and g >= 220 and b <= 35:  # Zöld
+            return self.GREEN
+        elif r <= 35 and g <= 35 and b >= 220:  # Kék
+            return self.BLUE
+        elif r >= 220 and g >= 220 and b <= 35:  # Sárga
+            return self.YELLOW
+        elif r >= 220 and g >= 100 and g <= 180 and b <= 35:  # Narancs
+            return self.ORANGE
+        else:
+            # A legközelebbi szín kiválasztása távolság alapján
+            colors = [
+                (0, 0, 0),       # Fekete
+                (255, 255, 255), # Fehér
+                (0, 255, 0),     # Zöld
+                (0, 0, 255),     # Kék
+                (255, 0, 0),     # Piros
+                (255, 255, 0),   # Sárga
+                (255, 128, 0)    # Narancs
+            ]
+            
+            min_distance = float('inf')
+            closest_color = self.WHITE  # Alapértelmezett: fehér
+            
+            for i, color in enumerate([self.BLACK, self.WHITE, self.GREEN, 
+                                     self.BLUE, self.RED, self.YELLOW, self.ORANGE]):
+                cr, cg, cb = colors[i]
+                distance = (r - cr)**2 + (g - cg)**2 + (b - cb)**2
+                
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_color = color
+                    
+            return closest_color
+                
+    def _clear_display(self):
+        """Kijelző tiszta fehérre állítása"""
+        logging.debug("Kijelző törlése fehérre")
         
-        # Felbontás beállítása
-        self.send_command(self.RESOLUTION_SETTING)
-        self.send_data(0x02)  # 640x480
-        self.send_data(0x80)
-        self.send_data(0x01)
-        self.send_data(0x90) 
-        
-        # VCOM and Data Interval Setting
-        self.send_command(self.VCOM_AND_DATA_INTERVAL_SETTING)
-        self.send_data(0x11)
-        self.send_data(0x07)
-        
-        # TCON beállítás
-        self.send_command(self.TCON_SETTING)
-        self.send_data(0x22)
-        
-        logging.info("4.01 inch 7-színű e-Paper inicializálás sikeres")
-        return 0
-
-    def wait_until_idle(self):
-        logging.debug("Várakozás a kijelző BUSY jelére...")
-        while epdconfig.digital_read(epdconfig.BUSY_PIN) == 0:
-            epdconfig.delay_ms(10)
-        logging.debug("Kijelző BUSY jel elengedve")
-
-    def reset(self):
-        logging.debug("Kijelző reset...")
-        epdconfig.digital_write(epdconfig.RST_PIN, 1)
-        epdconfig.delay_ms(200) 
-        epdconfig.digital_write(epdconfig.RST_PIN, 0)
-        epdconfig.delay_ms(10)
-        epdconfig.digital_write(epdconfig.RST_PIN, 1)
-        epdconfig.delay_ms(200)   
-
-    def send_command(self, command):
-        epdconfig.digital_write(epdconfig.DC_PIN, 0)
-        epdconfig.digital_write(epdconfig.CS_PIN, 0)
-        epdconfig.spi_writebyte([command])
-        epdconfig.digital_write(epdconfig.CS_PIN, 1)
-
-    def send_data(self, data):
-        epdconfig.digital_write(epdconfig.DC_PIN, 1)
-        epdconfig.digital_write(epdconfig.CS_PIN, 0)
-        epdconfig.spi_writebyte([data])
-        epdconfig.digital_write(epdconfig.CS_PIN, 1)
-        
-    def display(self, image):
-        """
-        A 7-színű e-Paper kijelző képének megjelenítése
-        """
-        logging.debug("Kép megjelenítése a 7-színű kijelzőn")
-        if isinstance(image, str):
-            logging.debug("Kép betöltése fájlból: %s", image)
-            image = Image.open(image)
-        
-        # Ellenőrizzük, hogy RGB módban van-e a kép
-        if image.mode != 'RGB':
-            logging.debug("Kép konvertálása RGB-re")
-            image = image.convert('RGB')
-        
-        # Átméretezés a kijelző felbontására, ha szükséges
-        if image.width != self.width or image.height != self.height:
-            logging.debug("Kép átméretezése: %sx%s -> %sx%s", 
-                         image.width, image.height, self.width, self.height)
-            image = image.resize((self.width, self.height))
-        
-        # Kezdjük a képátvitelt
-        logging.debug("Kép adatátvitel indítása...")
         self.send_command(self.DATA_START_TRANSMISSION_1)
         
-        # Képadatok feldolgozása és küldése
-        pixels = image.load()
-        for y in range(self.height):
-            for x in range(self.width):
-                r, g, b = pixels[x, y]
-                # Színek megfeleltetése a 7 színhez
-                if r == 0 and g == 0 and b == 0:  # Fekete
-                    self.send_data(0x00)
-                elif r == 255 and g == 255 and b == 255:  # Fehér
-                    self.send_data(0x01)
-                elif r == 0 and g == 255 and b == 0:  # Zöld
-                    self.send_data(0x02)
-                elif r == 0 and g == 0 and b == 255:  # Kék
-                    self.send_data(0x03)
-                elif r == 255 and g == 0 and b == 0:  # Piros
-                    self.send_data(0x04)
-                elif r == 255 and g == 255 and b == 0:  # Sárga 
-                    self.send_data(0x05)
-                elif r == 255 and g >= 165 and b == 0:  # Narancs
-                    self.send_data(0x06)
-                else:
-                    # Ha a szín nem felel meg egyiknek sem, használjuk a legközelebbi színt
-                    # Egyszerű implementáció: most fehér lesz az alapértelmezett
-                    self.send_data(0x01)
+        # Fehér pixelek küldése
+        for i in range(self.HEIGHT * self.WIDTH // 8):
+            self.send_data(0xFF)
+            
+        self.delay_ms(2)
         
-        # Kijelző frissítése
-        logging.debug("Kijelző frissítése...")
+        # Megjelenítés frissítése
         self.send_command(self.DISPLAY_REFRESH)
         self.wait_until_idle()
         
-        logging.debug("Kép megjelenítve a 7-színű kijelzőn")
+    def display(self, image):
+        """Gondosan optimalizált képmegjelenítési funkció"""
+        
+        # Kép kezelése
+        if isinstance(image, str):
+            logging.debug(f"Kép betöltése fájlból: {image}")
+            image = Image.open(image)
+            
+        # Konverzió RGB-be a megbízható színkezeléshez
+        if image.mode != 'RGB':
+            logging.debug(f"Kép konvertálása RGB módba ({image.mode} -> RGB)")
+            image = image.convert('RGB')
+            
+        # Átméretezés a kijelző felbontására ha szükséges
+        if image.width != self.width or image.height != self.height:
+            logging.debug(f"Kép átméretezése: {image.width}x{image.height} -> {self.width}x{self.height}")
+            image = image.resize((self.width, self.height), Image.LANCZOS)
+            
+        # Pixelek előkészítése
+        pixels = image.load()
+        
+        # Adatátvitel indítása a kijelzőre
+        logging.debug("Képadatok küldése...")
+        self.send_command(self.DATA_START_TRANSMISSION_1)
+        
+        # Soronként küldjük az adatokat a hatékonyság és a stabilitás érdekében
+        line_buffer = []
+        total_bytes = 0
+        
+        for y in range(self.height):
+            for x in range(self.width):
+                # RGB pixel átalakítása a megfelelő 7-színű értékre
+                pixel_color = self.get_color_value(pixels[x, y])
+                line_buffer.append(pixel_color)
+                total_bytes += 1
+                
+                # Ha a puffer megtelt, elküldjük (csökkenti az SPI átviteli hibák esélyét)
+                if len(line_buffer) >= 128:
+                    self.digital_write(epdconfig.DC_PIN, 1)
+                    self.digital_write(epdconfig.CS_PIN, 0)
+                    epdconfig.spi_writebyte(line_buffer)
+                    self.digital_write(epdconfig.CS_PIN, 1)
+                    line_buffer = []
+            
+            # Sorvégi maradék puffer küldése
+            if line_buffer:
+                self.digital_write(epdconfig.DC_PIN, 1)
+                self.digital_write(epdconfig.CS_PIN, 0)
+                epdconfig.spi_writebyte(line_buffer)
+                self.digital_write(epdconfig.CS_PIN, 1)
+                line_buffer = []
+                
+            # Időnként jelezzünk a haladásról
+            if y % 50 == 0:
+                logging.debug(f"Képküldés haladása: {y}/{self.height} sor")
+                
+        logging.debug(f"Összes küldött byte: {total_bytes}")
+        
+        # Refresh parancs (kijelző frissítése)
+        logging.debug("Kijelző frissítése...")
+        self.send_command(self.DISPLAY_REFRESH)
+        self.wait_until_idle()
+        logging.info("Kép megjelenítve")
+        
         return 0
         
     def getbuffer(self, image):
-        """
-        A kép előkészítése a kijelzőhöz
-        """
-        # A 7-színű kijelző esetén egyszerűen visszaadjuk az eredeti képet
+        """Kompatibilitás érdekében megtartjuk, de közvetlenül a képet adjuk vissza."""
+        # A 7-színű e-paper esetén a display funkció kezeli a képet
         return image
     
     def sleep(self):
-        """
-        Kijelző alvó módba helyezése
-        """
-        logging.debug("Alvó mód aktiválása")
+        """Kijelző alvó módba helyezése"""
+        logging.debug("Kijelző alvó módba helyezése")
         self.send_command(self.POWER_OFF)
         self.wait_until_idle()
         self.send_command(self.DEEP_SLEEP)
-        self.send_data(0xA5)
+        self.send_data(0xA5)  # Ellenőrző byte
+        self.delay_ms(100)  # Rövid várakozás hogy az alvó mód biztosan életbe lépjen
         
-    def Clear(self, color=0xFF):
-        """
-        Kijelző törlése adott színre (alapértelmezetten fehér)
-        """
-        logging.debug("Kijelző törlése")
-        # Fehér képet hozunk létre és azt jelenítjük meg
-        image = Image.new('RGB', (self.width, self.height), 'white')
-        self.display(image)
+    def Clear(self, color=WHITE):
+        """Kijelző törlése adott színre (alapértelmezetten fehér)"""
+        logging.debug(f"Kijelző törlése színre: {color}")
+        
+        # Színes kép létrehozása a törléshez
+        if color == self.WHITE:
+            # Optimalizált fehér törlés
+            image = Image.new('RGB', (self.width, self.height), (255, 255, 255))
+        elif color == self.BLACK:
+            image = Image.new('RGB', (self.width, self.height), (0, 0, 0))
+        elif color == self.RED:
+            image = Image.new('RGB', (self.width, self.height), (255, 0, 0))
+        elif color == self.GREEN:
+            image = Image.new('RGB', (self.width, self.height), (0, 255, 0))
+        elif color == self.BLUE:
+            image = Image.new('RGB', (self.width, self.height), (0, 0, 255))
+        elif color == self.YELLOW:
+            image = Image.new('RGB', (self.width, self.height), (255, 255, 0))
+        elif color == self.ORANGE:
+            image = Image.new('RGB', (self.width, self.height), (255, 128, 0))
+        else:
+            image = Image.new('RGB', (self.width, self.height), (255, 255, 255))
+            
+        # Megjelenítés a kijelzőn
+        return self.display(image)
 EOF
 
-# Teszt szkript létrehozása a 7-színű kijelző teszteléséhez
-echo "Teszt szkript létrehozása a 7-színű kijelzőhöz..." | tee -a "$LOG_FILE"
+# Teszt szkript létrehozása finomhangolt betűméretekkel és jobb kijelzés teszteléssel
+echo "Teszt szkript létrehozása..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/test_7color_display.py" << EOF
+
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
 
@@ -427,12 +598,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 # Logging beállítása
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('/var/log/epaper-test.log')
-    ]
+   level=logging.DEBUG,
+   format='%(asctime)s - %(levelname)s - %(message)s',
+   handlers=[
+       logging.StreamHandler(),
+       logging.FileHandler('/var/log/epaper-test.log')
+   ]
 )
 
 logging.info("7-színű 4.01 inch E-Paper teszt program indítása")
@@ -450,110 +621,165 @@ logging.info("Waveshare könyvtár hozzáadva: %s", waveshare_dir)
 # Elérhető modulok kilistázása
 logging.info("Elérhető modulok a lib/waveshare_epd könyvtárban:")
 for file in os.listdir(waveshare_dir):
-    if file.endswith('.py'):
-        logging.info("  - %s", file)
+   if file.endswith('.py'):
+       logging.info("  - %s", file)
 
 try:
-    # Modul importálása
-    logging.info("epdconfig importálása...")
-    import epdconfig
-    logging.info("epdconfig sikeresen importálva")
-    
-    logging.info("epd4in01f importálása...")
-    import epd4in01f
-    logging.info("epd4in01f sikeresen importálva")
-    
-    # Kijelző inicializálása
-    logging.info("E-Paper objektum létrehozása...")
-    epd = epd4in01f.EPD()
-    logging.info("E-Paper objektum sikeresen létrehozva")
-    
-    logging.info("Kijelző méretei: %d x %d", epd.width, epd.height)
-    
-    # Kijelző inicializálása
-    logging.info("Kijelző inicializálása...")
-    epd.init()
-    logging.info("Kijelző inicializálása sikeres")
-    
-    # Kijelző törlése
-    logging.info("Kijelző törlése...")
-    epd.Clear()
-    logging.info("Kijelző törölve")
-    
-    # 7-színű teszt kép létrehozása
-    logging.info("7-színű teszt kép létrehozása...")
-    image = Image.new('RGB', (epd.width, epd.height), 'white')
-    draw = ImageDraw.Draw(image)
-    
-    # Betűtípus betöltése
-    font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-    if os.path.exists(font_path):
-        font_large = ImageFont.truetype(font_path, 40)
-        font_medium = ImageFont.truetype(font_path, 30)
-        font_small = ImageFont.truetype(font_path, 24)
-    else:
-        # Ha nincs betűtípus, használjuk az alapértelmezettet
-        font_large = ImageFont.load_default()
-        font_medium = ImageFont.load_default()
-        font_small = ImageFont.load_default()
-    
-    # Főcím kirajzolása
-    draw.text((50, 40), '7-színű 4.01" E-Paper teszt', fill='black', font=font_large)
-    draw.text((50, 100), 'Sikeres inicializálás!', fill='red', font=font_medium)
-    
-    # Színtesztek
-    colors = [
-        ('Fekete', (0, 0, 0)),
-        ('Fehér', (255, 255, 255)),
-        ('Piros', (255, 0, 0)),
-        ('Zöld', (0, 255, 0)),
-        ('Kék', (0, 0, 255)),
-        ('Sárga', (255, 255, 0)),
-        ('Narancs', (255, 165, 0))
-    ]
-    
-    y_pos = 160
-    for i, (color_name, color) in enumerate(colors):
-        # Színes téglalap rajzolása
-        draw.rectangle([(50, y_pos), (150, y_pos + 30)], fill=color)
-        
-        # Színnév kiírása
-        draw.text((160, y_pos + 5), color_name, fill='black', font=font_small)
-        
-        y_pos += 35
-    
-    # Telepítés dátuma
-    draw.text((50, 350), 'Telepítés dátuma: $(date +%Y-%m-%d)', fill='blue', font=font_small)
-    
-    # Kép megjelenítése
-    logging.info("Kép megjelenítése a kijelzőn...")
-    epd.display(image)
-    logging.info("Kép sikeresen megjelenítve")
-    
-    # Alvó mód
-    logging.info("Alvó mód aktiválása...")
-    epd.sleep()
-    logging.info("Alvó mód aktiválva")
-    
-    logging.info("Teszt sikeresen befejezve")
-    print("Teszt sikeresen lefutott! A kijelző 7 színnel működik!")
-    
+   # Modul importálása
+   logging.info("epdconfig importálása...")
+   import epdconfig
+   logging.info("epdconfig sikeresen importálva")
+   
+   logging.info("epd4in01f importálása...")
+   import epd4in01f
+   logging.info("epd4in01f sikeresen importálva")
+   
+   # Kijelző inicializálása
+   logging.info("E-Paper objektum létrehozása...")
+   epd = epd4in01f.EPD()
+   logging.info("E-Paper objektum sikeresen létrehozva")
+   
+   logging.info("Kijelző méretei: %d x %d", epd.width, epd.height)
+   
+   # Kijelző inicializálása
+   logging.info("Kijelző inicializálása...")
+   init_result = epd.init()
+   logging.info("Kijelző inicializálása eredmény: %d", init_result)
+   
+   # Kijelző törlése fehérre
+   logging.info("Kijelző törlése fehérre...")
+   epd.Clear(epd.WHITE)
+   logging.info("Kijelző törölve fehérre")
+   
+   # Teljes teszt kép, fehér háttérrel
+   logging.info("7-színű teszt kép létrehozása...")
+   image = Image.new('RGB', (epd.width, epd.height), 'white')
+   draw = ImageDraw.Draw(image)
+   
+   # Betűtípus betöltése - KISEBB MÉRETEK a betűknél
+   font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+   if os.path.exists(font_path):
+       # Kisebb betűméreteket használunk a jobb megjelenítéshez
+       font_title = ImageFont.truetype(font_path, 26)  # Csökkentett méret
+       font_large = ImageFont.truetype(font_path, 20)  # Csökkentett méret
+       font_medium = ImageFont.truetype(font_path, 16)  # Csökkentett méret
+       font_small = ImageFont.truetype(font_path, 14)  # Csökkentett méret
+   else:
+       # Ha nincs betűtípus, használjuk az alapértelmezettet
+       logging.warning("DejaVuSans betűtípus nem található, alapértelmezett használata")
+       font_title = ImageFont.load_default()
+       font_large = ImageFont.load_default()
+       font_medium = ImageFont.load_default()
+       font_small = ImageFont.load_default()
+   
+   # Címsor kirajzolása - sötét háttér, fehér szöveg a jobb olvashatóságért
+   draw.rectangle([(0, 0), (epd.width, 35)], fill='black')
+   draw.text((50, 5), '7-színű 4.01" E-Paper Teszt', fill='white', font=font_title)
+   
+   # Kijelző információk
+   y_pos = 45
+   draw.text((10, y_pos), f'Kijelző: Waveshare 4.01" 7-Color E-Paper ({epd.width}x{epd.height})', 
+             fill='black', font=font_large)
+   y_pos += 25
+   draw.text((10, y_pos), f'Dátum: {time.strftime("%Y-%m-%d %H:%M")}', 
+             fill='black', font=font_medium)
+   y_pos += 25
+   
+   # Elválasztó vonal
+   draw.line([(10, y_pos), (epd.width-10, y_pos)], fill='black', width=1)
+   y_pos += 15
+   
+   # Színteszt rész címe
+   draw.text((10, y_pos), "Színteszt minták:", fill='black', font=font_medium)
+   y_pos += 25
+   
+   # 7 szín teszt - optimalizált elrendezés
+   colors = [
+       ('Fekete', (0, 0, 0), 'white'),
+       ('Fehér', (255, 255, 255), 'black'),
+       ('Piros', (255, 0, 0), 'white'),
+       ('Zöld', (0, 255, 0), 'black'),
+       ('Kék', (0, 0, 255), 'white'),
+       ('Sárga', (255, 255, 0), 'black'),
+       ('Narancs', (255, 165, 0), 'black')
+   ]
+   
+   # Két oszlopos elrendezés a színekhez
+   col_width = 300
+   for i, (color_name, color, text_color) in enumerate(colors):
+       col = i // 4  # 0 vagy 1, azaz bal vagy jobb oszlop
+       row = i % 4   # 0-3, azaz sorindexek
+       
+       x_pos = 10 + col * col_width
+       row_y_pos = y_pos + row * 40
+       
+       # Színes négyzet rajzolása
+       draw.rectangle([(x_pos, row_y_pos), (x_pos + 80, row_y_pos + 30)], fill=color, outline='black')
+       
+       # Színnév kiírása
+       draw.text((x_pos + 90, row_y_pos + 8), color_name, fill='black', font=font_medium)
+   
+   # Következő szakasz kezdete
+   y_pos += 170
+   
+   # Elválasztó vonal
+   draw.line([(10, y_pos), (epd.width-10, y_pos)], fill='black', width=1)
+   y_pos += 15
+   
+   # Szövegteszt
+   draw.text((10, y_pos), "Szövegteszt különböző méretekben:", fill='black', font=font_medium)
+   y_pos += 25
+   
+   draw.text((10, y_pos), "Ez egy kisméretű szöveg teszt", fill='black', font=font_small)
+   y_pos += 20
+   draw.text((10, y_pos), "Ez egy közepes méretű szöveg", fill='black', font=font_medium)
+   y_pos += 25
+   draw.text((10, y_pos), "Ez egy nagyobb méretű szöveg", fill='black', font=font_large)
+   y_pos += 30
+   
+   # Elválasztó vonal
+   draw.line([(10, y_pos), (epd.width-10, y_pos)], fill='black', width=1)
+   y_pos += 15
+   
+   # Telepítési információk
+   draw.text((10, y_pos), "Telepítés információk:", fill='red', font=font_medium)
+   y_pos += 25
+   draw.text((10, y_pos), f'Telepítve: {time.strftime("%Y-%m-%d")}', fill='blue', font=font_small)
+   y_pos += 20
+   draw.text((10, y_pos), "Újraindítás szükséges a változtatások teljes érvénybeléséhez.", 
+             fill='black', font=font_small)
+   
+   # Kép megjelenítése a kijelzőn
+   logging.info("Kép megjelenítése a kijelzőn...")
+   epd.display(image)
+   logging.info("Teszt kép sikeresen megjelenítve")
+   
+   # Kis szünet, hogy láthassuk a kijelzőt
+   time.sleep(2)
+   
+   # Alvó mód
+   logging.info("Alvó mód aktiválása...")
+   epd.sleep()
+   logging.info("Alvó mód aktiválva")
+   
+   logging.info("Teszt sikeresen befejezve")
+   print("Teszt sikeresen lefutott! A kijelző 7 színnel működik!")
+   
 except ImportError as e:
-    logging.error("Importálási hiba: %s", str(e))
-    print(f"Importálási hiba: {e}")
-    print("Ellenőrizd a log fájlt: /var/log/epaper-test.log")
-    sys.exit(1)
+   logging.error("Importálási hiba: %s", str(e))
+   print(f"Importálási hiba: {e}")
+   print("Ellenőrizd a log fájlt: /var/log/epaper-test.log")
+   sys.exit(1)
 except Exception as e:
-    logging.error("Hiba történt: %s", str(e), exc_info=True)
-    print(f"Hiba történt: {e}")
-    print("Ellenőrizd a log fájlt: /var/log/epaper-test.log")
-    sys.exit(1)
+   logging.error("Hiba történt: %s", str(e), exc_info=True)
+   print(f"Hiba történt: {e}")
+   print("Ellenőrizd a log fájlt: /var/log/epaper-test.log")
+   sys.exit(1)
 EOF
 
-# Weboldal megjelenítő szkript létrehozása
+# Weboldal megjelenítő szkript - optimalizálva a 4.01 inch kijelzőhöz
 echo "Weboldal megjelenítő szkript létrehozása..." | tee -a "$LOG_FILE"
 cat > "$INSTALL_DIR/display_webpage.py" << EOF
-
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
 
@@ -564,6 +790,7 @@ import subprocess
 import logging
 import traceback
 from PIL import Image, ImageDraw, ImageFont
+import json
 
 # Logging beállítása
 logging.basicConfig(
@@ -597,6 +824,7 @@ def wait_for_network():
    
    while attempts < max_attempts:
        try:
+           # Először a nap API-t próbáljuk - ez mutatja hogy tényleg van internet
            result = subprocess.run(
                ["ping", "-c", "1", "8.8.8.8"], 
                stdout=subprocess.PIPE, 
@@ -635,7 +863,17 @@ def initialize_epd():
        
        # Kijelző inicializálása
        logger.info("Kijelző inicializálása...")
-       epd.init()
+       init_result = epd.init()
+       if init_result != 0:
+           logger.warning(f"Kijelző inicializálása hibakóddal tért vissza: {init_result}")
+           # Második próbálkozás
+           logger.info("Újrapróbálkozás a kijelző inicializálására...")
+           time.sleep(1)
+           init_result = epd.init()
+           if init_result != 0:
+               logger.error("Kijelző inicializálása sikertelen! Hardverhiba lehet.")
+               raise Exception("Kijelző inicializálása sikertelen többszöri próbálkozás után is")
+       
        logger.info("Kijelző inicializálása sikeres")
        
        return epd
@@ -657,14 +895,16 @@ def capture_webpage():
        # Először a wkhtmltoimage-t próbáljuk
        if os.path.exists("/usr/bin/wkhtmltoimage") or os.path.exists("/usr/local/bin/wkhtmltoimage"):
            logger.info("wkhtmltoimage használata...")
-           command = f"xvfb-run -a wkhtmltoimage --width 640 --height 400 {WEBPAGE_URL} {screenshot_path}"
+           # Kevesebb hiba - specifikus méret és jobb paraméterek
+           command = f"xvfb-run -a wkhtmltoimage --width 640 --height 400 --quality 100 --disable-javascript --no-stop-slow-scripts --javascript-delay 1000 {WEBPAGE_URL} {screenshot_path}"
            subprocess.run(command, shell=True, check=True)
            return screenshot_path
        
        # Cutycapt mint tartalék
        elif os.path.exists("/usr/bin/cutycapt") or os.path.exists("/usr/local/bin/cutycapt"):
            logger.info("cutycapt használata...")
-           command = f"xvfb-run -a cutycapt --url={WEBPAGE_URL} --out={screenshot_path} --min-width=640 --min-height=400"
+           # Jobb minőségű paraméterek
+           command = f"xvfb-run -a cutycapt --url={WEBPAGE_URL} --out={screenshot_path} --min-width=640 --min-height=400 --delay=1000"
            subprocess.run(command, shell=True, check=True)
            return screenshot_path
        
@@ -686,7 +926,8 @@ def capture_webpage():
                    stdout=subprocess.PIPE,
                    stderr=subprocess.PIPE
                )
-               time.sleep(10)  # Várakozás az oldal betöltésére
+               # Több idő az oldal betöltéséhez
+               time.sleep(15)
                subprocess.run(f"DISPLAY=:{display_num} scrot {screenshot_path}", shell=True, check=True)
                midori_proc.terminate()
                subprocess.run(f"pkill -f 'Xvfb :{display_num}'", shell=True)
@@ -713,8 +954,17 @@ def display_image(epd, image_path):
    try:
        image = Image.open(image_path)
        
-       # Átméretezés a kijelző méretére
-       image = image.resize((epd.width, epd.height))
+       # Jobb minőségű átméretezés a kijelző méretére
+       image = image.resize((epd.width, epd.height), Image.LANCZOS)
+       
+       # Kontrasztjavítás az olvashatóságért
+       from PIL import ImageEnhance
+       enhancer = ImageEnhance.Contrast(image)
+       image = enhancer.enhance(1.2)  # Növeljük a kontrasztot 20%-kal
+       
+       # Élesítés a jobb olvashatóságért
+       from PIL import ImageFilter
+       image = image.filter(ImageFilter.SHARPEN)
        
        # Megjelenítés az e-paper kijelzőn
        logger.info("Kép megjelenítése a kijelzőn...")
@@ -733,18 +983,21 @@ def display_error_message(epd, message):
        image = Image.new('RGB', (epd.width, epd.height), 'white')
        draw = ImageDraw.Draw(image)
        
-       # Betűtípus betöltése
+       # Betűtípus betöltése - kisebb méretekkel a jobb olvashatóságért
        font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
        if os.path.exists(font_path):
-           font_large = ImageFont.truetype(font_path, 30)
-           font_small = ImageFont.truetype(font_path, 20)
+           font_title = ImageFont.truetype(font_path, 24)
+           font_medium = ImageFont.truetype(font_path, 18)
+           font_small = ImageFont.truetype(font_path, 14)
        else:
            # Ha nincs betűtípus, használjuk az alapértelmezettet
-           font_large = ImageFont.load_default()
+           font_title = ImageFont.load_default()
+           font_medium = ImageFont.load_default()
            font_small = ImageFont.load_default()
        
-       # Hibaüzenet kirajzolása
-       draw.text((50, 50), 'HIBA!', fill='red', font=font_large)
+       # Hibaüzenet kirajzolása - jobb formázással
+       draw.rectangle([(0, 0), (epd.width, 35)], fill='red')
+       draw.text((50, 5), 'HIBA!', fill='white', font=font_title)
        
        # Tördeljük a hibaüzenetet sorokra
        words = message.split()
@@ -753,7 +1006,8 @@ def display_error_message(epd, message):
        
        for word in words:
            test_line = line + " " + word if line else word
-           if len(test_line) * 10 <= epd.width - 100:  # egyszerű becslés a szélességre
+           text_width = draw.textlength(test_line, font=font_medium) if hasattr(draw, 'textlength') else font_medium.getlength(test_line)
+           if text_width <= epd.width - 60:
                line = test_line
            else:
                lines.append(line)
@@ -763,10 +1017,13 @@ def display_error_message(epd, message):
            lines.append(line)
        
        # Kirajzoljuk a sorokat
-       y = 100
+       y = 50
        for line in lines:
-           draw.text((50, y), line, fill='black', font=font_small)
-           y += 30
+           draw.text((30, y), line, fill='black', font=font_medium)
+           y += 25
+       
+       # Idő bélyeg
+       draw.text((30, epd.height - 40), f"Idő: {time.strftime('%Y-%m-%d %H:%M:%S')}", fill='blue', font=font_small)
        
        # Kép megjelenítése
        epd.display(image)
@@ -777,43 +1034,78 @@ def display_error_message(epd, message):
        logger.error(traceback.format_exc())
        return False
 
-def main():
+def get_weather_info():
+   """Időjárási információk lekérése"""
+   try:
+       # Ezt csak online módban adjuk hozzá a képhez
+       return None
+   except Exception as e:
+       logger.error(f"Időjárás lekérés hiba: {e}")
+       return None
+
+       def main():
    try:
        # Várakozás a hálózati kapcsolat elérhetőségére
-       if not wait_for_network():
+       network_available = wait_for_network()
+       if not network_available:
            logger.warning("Figyelmeztetés: Hálózat nem elérhető, offline mód aktiválva")
        
        # E-paper inicializálása
        logger.info("E-paper kijelző inicializálása...")
        epd = initialize_epd()
        
-       # Üdvözlő üzenet megjelenítése
-       logger.info("Rendszer indulása, üdvözlő üzenet megjelenítése...")
+       # Kezdőkép megjelenítése
+       logger.info("Kezdőkép megjelenítése...")
        try:
-           # Kép létrehozása
+           # Tiszta fehér kép létrehozása
            image = Image.new('RGB', (epd.width, epd.height), 'white')
            draw = ImageDraw.Draw(image)
            
-           # Betűtípus betöltése
+           # Betűtípus betöltése - kisebb méretekkel
            font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
            if os.path.exists(font_path):
-               font_large = ImageFont.truetype(font_path, 30)
-               font_small = ImageFont.truetype(font_path, 20)
+               font_title = ImageFont.truetype(font_path, 24)
+               font_medium = ImageFont.truetype(font_path, 18)
+               font_small = ImageFont.truetype(font_path, 14)
            else:
                # Ha nincs betűtípus, használjuk az alapértelmezettet
-               font_large = ImageFont.load_default()
+               font_title = ImageFont.load_default()
+               font_medium = ImageFont.load_default()
                font_small = ImageFont.load_default()
            
            # Szöveg kirajzolása
-           draw.text((epd.width//4, epd.height//3), '7-Színű 4.01" E-Paper kijelző', fill='blue', font=font_large)
-           draw.text((epd.width//4, epd.height//2), f'URL: {WEBPAGE_URL}', fill='red', font=font_small)
+           draw.rectangle([(0, 0), (epd.width, 35)], fill='blue')
+           draw.text((50, 5), '7-Színű 4.01" E-Paper Webkijelző', fill='white', font=font_title)
+           
+           y_pos = 50
+           draw.text((30, y_pos), f'URL: {WEBPAGE_URL}', fill='black', font=font_medium)
+           y_pos += 30
+           
+           draw.text((30, y_pos), f'Állapot: {"Online" if network_available else "Offline"}', 
+                     fill='green' if network_available else 'red', font=font_medium)
+           y_pos += 30
+           
+           draw.text((30, y_pos), f'Méret: {epd.width}x{epd.height} pixel', fill='black', font=font_medium)
+           y_pos += 30
+           
+           draw.text((30, y_pos), f'Indítva: {time.strftime("%Y-%m-%d %H:%M:%S")}', fill='black', font=font_medium)
+           y_pos += 40
+           
+           # Információ
+           draw.text((30, y_pos), "Weboldal betöltése folyamatban...", fill='blue', font=font_medium)
+           y_pos += 40
+           
+           if not network_available:
+               draw.text((30, y_pos), "FIGYELEM: Nincs hálózat! Offline mód aktív!", fill='red', font=font_medium)
+               y_pos += 30
+               draw.text((30, y_pos), "Ellenőrizze a hálózati kapcsolatot!", fill='red', font=font_medium)
            
            # Kép megjelenítése
            epd.display(image)
-           logger.info("Üdvözlő üzenet megjelenítve")
-           time.sleep(2)  # Rövid idő az üzenet olvasására
+           logger.info("Kezdőkép megjelenítve")
+           time.sleep(2)  # Rövid idő a kép megtekintésére
        except Exception as e:
-           logger.error(f"Nem sikerült megjeleníteni az üdvözlő üzenetet: {e}")
+           logger.error(f"Nem sikerült megjeleníteni a kezdőképet: {e}")
            logger.error(traceback.format_exc())
        
        # Frissítési kísérlet számláló
@@ -822,31 +1114,73 @@ def main():
        # Fő ciklus
        while True:
            try:
-               logger.info("Weboldal képernyőkép készítése...")
-               screenshot = capture_webpage()
-               
-               if screenshot and os.path.exists(screenshot):
-                   logger.info("Megjelenítés az e-paper kijelzőn...")
-                   if display_image(epd, screenshot):
-                       logger.info("Megjelenítés sikeres")
-                       failed_attempts = 0  # Sikeres frissítés, nullázzuk a számlálót
+               if network_available:
+                   logger.info("Weboldal képernyőkép készítése...")
+                   screenshot = capture_webpage()
+                   
+                   if screenshot and os.path.exists(screenshot):
+                       logger.info("Megjelenítés az e-paper kijelzőn...")
+                       if display_image(epd, screenshot):
+                           logger.info("Megjelenítés sikeres")
+                           failed_attempts = 0  # Sikeres frissítés, nullázzuk a számlálót
+                       else:
+                           logger.error("Nem sikerült megjeleníteni a képet")
+                           failed_attempts += 1
+                           if failed_attempts >= 3:
+                               display_error_message(epd, "Nem sikerült megjeleníteni a képet háromszor egymás után. Ellenőrizze a kijelző csatlakozását.")
                    else:
-                       logger.error("Nem sikerült megjeleníteni a képet")
+                       logger.error("Nem sikerült képernyőképet készíteni a weboldalról")
                        failed_attempts += 1
                        if failed_attempts >= 3:
-                           display_error_message(epd, "Nem sikerült megjeleníteni a képet háromszor egymás után.")
+                           display_error_message(epd, "Nem sikerült képernyőképet készíteni a weboldalról háromszor egymás után. Ellenőrizze a hálózati kapcsolatot.")
                else:
-                   logger.error("Nem sikerült képernyőképet készíteni a weboldalról")
-                   failed_attempts += 1
-                   if failed_attempts >= 3:
-                       display_error_message(epd, "Nem sikerült képernyőképet készíteni a weboldalról háromszor egymás után.")
+                   # Offline mód - infó kép megjelenítése
+                   offline_image = Image.new('RGB', (epd.width, epd.height), 'white')
+                   draw = ImageDraw.Draw(offline_image)
+                   
+                   # Betűtípus betöltése
+                   font_path = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+                   if os.path.exists(font_path):
+                       font_title = ImageFont.truetype(font_path, 24)
+                       font_medium = ImageFont.truetype(font_path, 18)
+                       font_small = ImageFont.truetype(font_path, 14)
+                   else:
+                       font_title = ImageFont.load_default()
+                       font_medium = ImageFont.load_default()
+                       font_small = ImageFont.load_default()
+                   
+                   # Offline infó kirajzolása
+                   draw.rectangle([(0, 0), (epd.width, 35)], fill='red')
+                   draw.text((50, 5), 'OFFLINE MÓD', fill='white', font=font_title)
+                   
+                   y_pos = 50
+                   draw.text((30, y_pos), "A hálózati kapcsolat nem elérhető.", fill='black', font=font_medium)
+                   y_pos += 30
+                   
+                   draw.text((30, y_pos), "A weboldal nem jeleníthető meg.", fill='black', font=font_medium)
+                   y_pos += 30
+                   
+                   draw.text((30, y_pos), "Kérjük, ellenőrizze a hálózati beállításokat.", fill='blue', font=font_medium)
+                   y_pos += 40
+                   
+                   draw.text((30, y_pos), "A rendszer továbbra is megpróbál csatlakozni.", fill='black', font=font_medium)
+                   y_pos += 30
+                   
+                   # Kép megjelenítése
+                   epd.display(offline_image)
+                   
+                   # Újra ellenőrizzük a hálózatot
+                   network_available = wait_for_network()
+                   if network_available:
+                       logger.info("Hálózati kapcsolat helyreállt!")
+                   
            except Exception as e:
                logger.error(f"Hiba a frissítési ciklusban: {e}")
                logger.error(traceback.format_exc())
                failed_attempts += 1
                if failed_attempts >= 3:
                    try:
-                       display_error_message(epd, f"Ismétlődő hiba: {str(e)[:50]}...")
+                       display_error_message(epd, f"Ismétlődő hiba: {str(e)[:100]}...")
                    except:
                        pass
            
