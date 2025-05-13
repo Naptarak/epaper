@@ -601,7 +601,7 @@ sys.path.append(waveshare_dir)
 logger.info("Waveshare könyvtár hozzáadva: %s", waveshare_dir)
 
 # Weboldal URL meghatározása
-WEBPAGE_URL = "http://example.com"  # Cseréld ki a kívánt URL-re
+WEBPAGE_URL = "http://naptarak.com/e-paper.html"  # Cseréld ki a kívánt URL-re
 
 # Várakozás a hálózati kapcsolatra
 def wait_for_network():
