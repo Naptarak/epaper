@@ -1,8 +1,6 @@
 #!/bin/bash
-
 set -e
 
-echo "Frissítés és függőségek telepítése..."
 sudo apt-get update
 sudo apt-get install -y python3 python3-pip python3-venv git
 
@@ -10,31 +8,28 @@ APPDIR="/home/pi/weather-epaper"
 PYFILE="$APPDIR/epaper_display.py"
 VENVDIR="$APPDIR/venv"
 
-echo "Alkalmazás mappa létrehozása..."
 mkdir -p "$APPDIR"
 
-echo "Python venv létrehozása..."
 python3 -m venv "$VENVDIR"
-
-echo "Venv aktiválása és csomagok telepítése..."
 "$VENVDIR/bin/pip" install --upgrade pip
 "$VENVDIR/bin/pip" install pillow requests
 
-echo "Waveshare driver letöltése..."
 cd "$APPDIR"
 if [ ! -d "$APPDIR/e-Paper" ]; then
     git clone https://github.com/waveshare/e-Paper.git
 fi
 
-echo "Python alkalmazás generálása..."
 cat > "$PYFILE" << 'EOF'
-# epaper_display.py
+import sys
 import time
 import datetime
 import requests
 from PIL import Image, ImageDraw, ImageFont
 import os
-import sys
+
+# LOGFILE
+sys.stdout = open("log.txt", "a", buffering=1)
+sys.stderr = open("log.txt", "a", buffering=1)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'e-Paper/RaspberryPi_JetsonNano/python/lib'))
 from waveshare_epd import epd4in01f
@@ -53,14 +48,14 @@ SMALL_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 font_large = ImageFont.truetype(FONT_PATH, 38)
 font_mid = ImageFont.truetype(FONT_PATH, 22)
 font_small = ImageFont.truetype(SMALL_FONT_PATH, 16)
-font_tiny = ImageFont.truetype(SMALL_FONT_PATH, 12)
 
 def get_weather():
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?q={CITY},{COUNTRY}&units=metric&appid={API_KEY}&lang=hu"
         resp = requests.get(url, timeout=10)
         return resp.json()
-    except:
+    except Exception as e:
+        print(f"Weather error: {e}")
         return None
 
 def get_forecast():
@@ -68,7 +63,8 @@ def get_forecast():
         url = f"https://api.openweathermap.org/data/2.5/forecast?q={CITY},{COUNTRY}&units=metric&appid={API_KEY}&lang=hu"
         resp = requests.get(url, timeout=10)
         return resp.json()
-    except:
+    except Exception as e:
+        print(f"Forecast error: {e}")
         return None
 
 def get_holiday(dt):
@@ -175,6 +171,7 @@ def mainloop():
             image = draw_weather(epd, weather, forecast)
             epd.display(epd.getbuffer(image))
         except Exception as e:
+            print(f"Hiba: {e}")
             image = Image.new("RGB", (W, H), (255,255,255))
             draw = ImageDraw.Draw(image)
             draw.text((10,10), "Hiba!", font=font_large, fill=(255,0,0))
@@ -198,6 +195,8 @@ User=pi
 WorkingDirectory=$APPDIR
 ExecStart=$VENVDIR/bin/python $PYFILE
 Restart=always
+StandardOutput=append:$APPDIR/service.log
+StandardError=append:$APPDIR/service.err
 
 [Install]
 WantedBy=multi-user.target
@@ -207,4 +206,6 @@ sudo systemctl daemon-reload
 sudo systemctl enable weather-epaper.service
 sudo systemctl restart weather-epaper.service
 
-echo "Telepítés kész! A kijelző 5 percenként automatikusan frissül."
+echo "Telepítés kész!"
+echo "Logokat itt találod: $APPDIR/log.txt, $APPDIR/service.log, $APPDIR/service.err"
+echo "Systemd naplóhoz: sudo journalctl -u weather-epaper.service -f"
