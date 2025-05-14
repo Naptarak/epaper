@@ -55,13 +55,18 @@ log_section "1. Előfeltételek ellenőrzése"
 # 1.1 Rendszerfrissítés
 log_info "Rendszerfrissítés..."
 sudo apt-get update -y
-# Kötelező csomagok frissítése csak, hogy ne tartson sokáig
+# Kötelező csomagok frissítése csak
+log_info "Csak a kritikus csomagok frissítése (hogy ne tartson sokáig)..."
 sudo apt-get upgrade -y python3 python3-pip
 
-# 1.2 Szükséges csomagok telepítése - JAVÍTVA a hiányzó csomagokkal
-log_info "Szükséges csomagok telepítése..."
-sudo apt-get install -y python3-pip python3-pil python3-numpy git python3-rpi.gpio python3-spidev python3-venv python3-gpiozero libxml2-dev libxslt-dev python3-dev libffi-dev build-essential
-sudo apt-get install -y python3-bs4 python3-html5lib python3-lxml || log_warn "Nem sikerült telepíteni a Python csomagokat apt-get segítségével, később pip-pel próbáljuk"
+# 1.2 Szükséges rendszercsomagok telepítése - JAVÍTVA
+# Először az alapvető csomagokat
+log_info "Alap rendszercsomagok telepítése..."
+sudo apt-get install -y git python3-pip python3-rpi.gpio python3-spidev python3-gpiozero
+
+# Már előre fordított csomagokat telepítünk, ahol lehetséges
+log_info "Előre fordított Python csomagok telepítése rendszercsomagokból..."
+sudo apt-get install -y python3-pil python3-numpy python3-bs4 python3-lxml python3-html5lib
 
 # 1.3 SPI interfész ellenőrzése
 log_info "SPI interfész ellenőrzése..."
@@ -153,108 +158,23 @@ log_info "Könyvtár létrehozása: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# 2.3 Python virtuális környezet létrehozása
-log_info "Python virtuális környezet létrehozása..."
-python3 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-
-# 2.4 Szükséges Python csomagok telepítése
-log_info "Python csomagok telepítése..."
-pip install pillow numpy requests schedule RPi.GPIO spidev gpiozero beautifulsoup4 html5lib lxml
+# 2.3 A forrásfájlok létrehozása
+log_info "Szükséges fájlok létrehozása..."
 
 # ===================================================
 # 3. Waveshare e-Paper könyvtár telepítése
 # ===================================================
 log_section "3. Waveshare e-Paper könyvtár telepítése"
 
-# 3.1 Próbáljuk meg letölteni a hivatalos könyvtárat GitHubról
-if [ "$USE_DIRECT_DRIVER" = false ]; then
-    log_info "Waveshare e-Paper könyvtár letöltése GitHubról..."
-    if ! git clone https://github.com/waveshare/e-Paper.git; then
-        log_warn "Nem sikerült letölteni a Waveshare e-Paper könyvtárat GitHubról."
-        USE_DIRECT_DRIVER=true
-    fi
-    
-    # Ellenőrizzük a letöltést
-    if [ -d "e-Paper" ]; then
-        # Keressük meg a megfelelő Python könyvtárat
-        if [ -d "e-Paper/RaspberryPi_JetsonNano/python" ]; then
-            log_info "RaspberryPi_JetsonNano könyvtár megtalálva..."
-            cd e-Paper/RaspberryPi_JetsonNano/python
-            
-            # Ellenőrizzük, hogy sikerül-e telepíteni
-            if ! pip install ./; then
-                log_warn "Nem sikerült telepíteni a Waveshare könyvtárat pip-pel."
-                log_info "Alternatív telepítési módszer használata..."
-                
-                # Közvetlenül másoljuk az elérhető könyvtárakat
-                if [ -d "lib/waveshare_epd" ]; then
-                    log_info "Waveshare könyvtár másolása a site-packages könyvtárba..."
-                    cp -r lib/waveshare_epd ../../../../venv/lib/python*/site-packages/
-                    if [ $? -eq 0 ]; then
-                        log_info "Waveshare könyvtár sikeresen másolva."
-                    else
-                        log_warn "Nem sikerült másolni a könyvtárat. Folytatás alternatív módon..."
-                        USE_DIRECT_DRIVER=true
-                    fi
-                else
-                    log_warn "A waveshare_epd könyvtár nem található. Folytatás alternatív módon..."
-                    USE_DIRECT_DRIVER=true
-                fi
-            else
-                log_info "Waveshare e-Paper könyvtár sikeresen telepítve pip-pel!"
-            fi
-            
-            cd "$INSTALL_DIR"
-        elif [ -d "e-Paper/RaspberryPi/python" ]; then
-            log_info "RaspberryPi könyvtár megtalálva..."
-            cd e-Paper/RaspberryPi/python
-            
-            # Ellenőrizzük, hogy sikerül-e telepíteni
-            if ! pip install ./; then
-                log_warn "Nem sikerült telepíteni a Waveshare könyvtárat pip-pel."
-                log_info "Alternatív telepítési módszer használata..."
-                
-                # Közvetlenül másoljuk az elérhető könyvtárakat
-                if [ -d "lib/waveshare_epd" ]; then
-                    log_info "Waveshare könyvtár másolása a site-packages könyvtárba..."
-                    cp -r lib/waveshare_epd ../../../../venv/lib/python*/site-packages/
-                    if [ $? -eq 0 ]; then
-                        log_info "Waveshare könyvtár sikeresen másolva."
-                    else
-                        log_warn "Nem sikerült másolni a könyvtárat. Folytatás alternatív módon..."
-                        USE_DIRECT_DRIVER=true
-                    fi
-                else
-                    log_warn "A waveshare_epd könyvtár nem található. Folytatás alternatív módon..."
-                    USE_DIRECT_DRIVER=true
-                fi
-            else
-                log_info "Waveshare e-Paper könyvtár sikeresen telepítve pip-pel!"
-            fi
-            
-            cd "$INSTALL_DIR"
-        else
-            log_warn "Nem található megfelelő Python könyvtár a letöltött repository-ban."
-            USE_DIRECT_DRIVER=true
-        fi
-    else
-        USE_DIRECT_DRIVER=true
-    fi
-fi
+# Közvetlenül hozzuk létre a szükséges driver fájlokat
+log_info "Waveshare e-Paper driverek közvetlen létrehozása..."
 
-# 3.2 Ha nem sikerült a GitHub letöltés, használjuk a közvetlen módszert
-if [ "$USE_DIRECT_DRIVER" = true ]; then
-    log_section "Alternatív driver telepítés"
-    log_info "Waveshare e-Paper driverek közvetlen létrehozása..."
+# Waveshare könyvtárszerkezet létrehozása
+mkdir -p waveshare_epd
     
-    # Waveshare könyvtárszerkezet létrehozása
-    mkdir -p waveshare_epd
-    
-    # Fő driver: epdconfig.py
-    log_info "epdconfig.py létrehozása..."
-    cat > waveshare_epd/epdconfig.py << 'EOL'
+# Fő driver: epdconfig.py
+log_info "epdconfig.py létrehozása..."
+cat > waveshare_epd/epdconfig.py << 'EOL'
 # /*****************************************************************************
 # * | File        :   epdconfig.py
 # * | Author      :   Waveshare team
@@ -355,9 +275,9 @@ for func in [x for x in dir(implementation) if not x.startswith('_')]:
     setattr(sys.modules[__name__], func, getattr(implementation, func))
 EOL
 
-    # E-Paper 4.01" F driver
-    log_info "epd4in01f.py létrehozása..."
-    cat > waveshare_epd/epd4in01f.py << 'EOL'
+# E-Paper 4.01" F driver
+log_info "epd4in01f.py létrehozása..."
+cat > waveshare_epd/epd4in01f.py << 'EOL'
 # *****************************************************************************
 # * | File        :   epd4in01f.py
 # * | Author      :   Waveshare team
@@ -593,133 +513,14 @@ class EPD:
         epdconfig.module_exit()
 EOL
 
-    # Inicializáló fájl
-    log_info "__init__.py létrehozása..."
-    cat > waveshare_epd/__init__.py << 'EOL'
+# Inicializáló fájl
+log_info "__init__.py létrehozása..."
+cat > waveshare_epd/__init__.py << 'EOL'
 # Waveshare E-Paper Driver csomag
 EOL
 
-    # Telepítés a virtuális környezetbe
-    log_info "Driver másolása a virtuális környezetbe..."
-    cp -r waveshare_epd venv/lib/python*/site-packages/
-    
-    if [ $? -eq 0 ]; then
-        log_info "Waveshare driver sikeresen telepítve!"
-    else
-        log_error "Nem sikerült telepíteni a Waveshare drivert!"
-        exit 1
-    fi
-fi
-
-# ===================================================
-# 4. E-Paper tesztprogram létrehozása
-# ===================================================
-log_section "4. E-Paper tesztprogram létrehozása"
-
-log_info "epaper_test.py létrehozása..."
-cat > epaper_test.py << 'EOL'
-#!/usr/bin/env python3
-# -*- coding:utf-8 -*-
-
-import logging
-import time
-import sys
-import os
-from PIL import Image, ImageDraw, ImageFont
-
-# Logging beállítása
-logging.basicConfig(level=logging.DEBUG)
-
-# Waveshare könyvtár importálása
-try:
-    # Alternatív elérési utak a Waveshare könyvtárhoz
-    paths_to_try = [
-        'e-Paper/RaspberryPi_JetsonNano/python/lib',
-        'e-Paper/RaspberryPi/python/lib',
-        '.',
-    ]
-    
-    for path in paths_to_try:
-        if os.path.exists(path):
-            if path not in sys.path:
-                sys.path.append(path)
-    
-    from waveshare_epd import epd4in01f
-    logging.info("Waveshare modul sikeresen importálva!")
-except ImportError as e:
-    logging.error(f"Hiba a Waveshare modul importálásakor: {e}")
-    logging.error("Ellenőrizd, hogy megfelelően telepítetted-e a könyvtárat.")
-    sys.exit(1)
-
-try:
-    logging.info("E-Paper teszt indítása...")
-    
-    # E-Paper inicializálása
-    epd = epd4in01f.EPD()
-    logging.info("Kijelző inicializálása...")
-    epd.init()
-    
-    # Kijelző tisztítása
-    logging.info("Kijelző törlése...")
-    epd.Clear()
-    
-    # Font keresése
-    font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf"
-    ]
-    
-    font = None
-    for path in font_paths:
-        if os.path.exists(path):
-            font = ImageFont.truetype(path, 24)
-            logging.info(f"Betűtípus betöltve: {path}")
-            break
-    
-    if font is None:
-        logging.warning("Nem található megfelelő betűtípus, alapértelmezett használata...")
-        font = ImageFont.load_default()
-    
-    # Teszt kép létrehozása
-    logging.info("Teszt kép létrehozása...")
-    image = Image.new('RGB', (epd.width, epd.height), 'white')
-    draw = ImageDraw.Draw(image)
-    
-    # Teszt minta rajzolása
-    draw.rectangle([(20, 20), (620, 380)], outline='blue')
-    draw.text((180, 120), 'E-Paper Teszt!', font=font, fill='black')
-    draw.text((180, 160), 'A teszt sikeresen fut!', font=font, fill='red')
-    draw.text((180, 200), 'Waveshare 4.01" kijelző', font=font, fill='green')
-    
-    # Ez a kép, ahogy kijelzőre kerül
-    logging.info("Kép megjelenítése a kijelzőn...")
-    epd.display(epd.getbuffer(image))
-    logging.info("A képnek most látszódnia kell a kijelzőn!")
-    
-    # Várunk, hogy lássuk az eredményt
-    time.sleep(5)
-    
-    # Kijelző alvó módba helyezése
-    logging.info("Kijelző alvó módba helyezése...")
-    epd.sleep()
-    
-    logging.info("Teszt sikeresen befejezve!")
-    
-except Exception as e:
-    logging.error(f"Hiba a teszt során: {e}")
-    sys.exit(1)
-EOL
-
-# Teszt futtathatóvá tétele
-chmod +x epaper_test.py
-
-# ===================================================
-# 5. Fő alkalmazás létrehozása - HTML Megjelenítő
-# ===================================================
-log_section "5. HTML Megjelenítő Alkalmazás Létrehozása"
-
-log_info "html_display.py létrehozása..."
+# HTML megjelenítő létrehozása egyszerűbb HTML parser használatával (html.parser beépített modul)
+log_info "html_display.py létrehozása egyszerűbb parserrel..."
 cat > html_display.py << 'EOL'
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
@@ -732,8 +533,7 @@ import requests
 import schedule
 import traceback
 from PIL import Image, ImageDraw, ImageFont
-from bs4 import BeautifulSoup
-from io import BytesIO
+from html.parser import HTMLParser
 import signal
 import datetime
 import re
@@ -777,17 +577,87 @@ epd = None
 fonts = {}
 shutdown_flag = False
 
+# Egyszerű HTML parser osztály
+class SimpleHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.title = ""
+        self.content = []
+        self.current_tag = None
+        self.recording_title = False
+        self.current_text = ""
+        
+    def handle_starttag(self, tag, attrs):
+        self.current_tag = tag
+        
+        if tag == "title":
+            self.recording_title = True
+        elif tag in ["h1", "h2", "h3"]:
+            if self.current_text:
+                self.save_current_text()
+            self.current_text = ""
+        elif tag == "p":
+            if self.current_text:
+                self.save_current_text()
+            self.current_text = ""
+        elif tag == "li":
+            if self.current_text:
+                self.save_current_text()
+            self.current_text = "• "
+        elif tag == "img":
+            alt = ""
+            src = ""
+            for attr in attrs:
+                if attr[0] == "alt":
+                    alt = attr[1]
+                elif attr[0] == "src":
+                    src = attr[1]
+            if src:
+                self.content.append({
+                    "type": "image",
+                    "url": src,
+                    "alt": alt or "Kép"
+                })
+    
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self.recording_title = False
+        elif tag in ["h1", "h2", "h3", "p", "li"]:
+            self.save_current_text()
+            self.current_tag = None
+            self.current_text = ""
+    
+    def handle_data(self, data):
+        if self.recording_title:
+            self.title += data
+        elif self.current_tag in ["h1", "h2", "h3", "p", "li"]:
+            self.current_text += data.strip()
+    
+    def save_current_text(self):
+        text = self.current_text.strip()
+        if text:
+            if self.current_tag in ["h1", "h2", "h3"]:
+                level = int(self.current_tag[1])
+                self.content.append({
+                    "type": "heading",
+                    "text": text,
+                    "level": level
+                })
+            elif self.current_tag == "p":
+                self.content.append({
+                    "type": "paragraph",
+                    "text": text
+                })
+            elif self.current_tag == "li":
+                self.content.append({
+                    "type": "list_item",
+                    "text": text
+                })
+
 # Waveshare könyvtár importálása
 try:
-    paths_to_try = [
-        'e-Paper/RaspberryPi_JetsonNano/python/lib',
-        'e-Paper/RaspberryPi/python/lib',
-        '.',
-    ]
-    
-    for path in paths_to_try:
-        if os.path.exists(path) and path not in sys.path:
-            sys.path.append(path)
+    # Elérési utak a modulhoz
+    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'waveshare_epd'))
     
     from waveshare_epd import epd4in01f
     logger.info("Waveshare modul sikeresen importálva")
@@ -849,67 +719,22 @@ def fetch_html_content(url):
         logger.error(f"Hiba a HTML letöltésekor: {e}")
         return None
 
-# HTML feldolgozása
+# HTML feldolgozása a beépített HTML parser használatával
 def parse_html(html_content, base_url):
-    soup = BeautifulSoup(html_content, 'html.parser')
+    parser = SimpleHTMLParser()
+    parser.feed(html_content)
     
-    # Cím kinyerése
-    title = soup.title.string if soup.title else "Nincs cím"
-    
-    # Tartalom előkészítése
-    content = []
-    
-    # Fejléc elemek feldolgozása
-    for heading in soup.find_all(['h1', 'h2', 'h3']):
-        text = heading.get_text(strip=True)
-        if text:
-            tag_type = heading.name
-            content.append({
-                'type': 'heading',
-                'text': text,
-                'level': int(tag_type[1]),
-            })
-    
-    # Bekezdések feldolgozása
-    for paragraph in soup.find_all('p'):
-        text = paragraph.get_text(strip=True)
-        if text:
-            content.append({
-                'type': 'paragraph',
-                'text': text
-            })
-    
-    # Lista elemek feldolgozása
-    for ul in soup.find_all(['ul', 'ol']):
-        for li in ul.find_all('li'):
-            text = li.get_text(strip=True)
-            if text:
-                content.append({
-                    'type': 'list_item',
-                    'text': f"• {text}"
-                })
-    
-    # Képek feldolgozása (csak linkeket mentjük, nem töltjük le most)
-    for img in soup.find_all('img'):
-        if img.get('src'):
-            img_url = urljoin(base_url, img.get('src'))
-            content.append({
-                'type': 'image',
-                'url': img_url,
-                'alt': img.get('alt', 'Kép')
-            })
-    
-    # Feldolgozás limitálása
+    # Limitáljuk a tartalmat
     total_length = 0
     limited_content = []
-    for item in content:
+    for item in parser.content:
         if 'text' in item:
             total_length += len(item['text'])
         if total_length > CONFIG["max_content_length"]:
             break
         limited_content.append(item)
     
-    return title, limited_content
+    return parser.title or "Nincs cím", limited_content
 
 # Kép rajzolása a kijelzőre
 def draw_content(title, content_items):
@@ -1143,13 +968,104 @@ if __name__ == "__main__":
     main()
 EOL
 
-# Futtathatóvá tesszük
-chmod +x html_display.py
+# ===================================================
+# 4. E-Paper tesztprogram létrehozása
+# ===================================================
+log_section "4. E-Paper tesztprogram létrehozása"
+
+log_info "epaper_test.py létrehozása..."
+cat > epaper_test.py << 'EOL'
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+
+import logging
+import time
+import sys
+import os
+from PIL import Image, ImageDraw, ImageFont
+
+# Logging beállítása
+logging.basicConfig(level=logging.DEBUG)
+
+# Waveshare könyvtár importálása
+try:
+    # Elérési út a modulhoz
+    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'waveshare_epd'))
+    
+    from waveshare_epd import epd4in01f
+    logging.info("Waveshare modul sikeresen importálva!")
+except ImportError as e:
+    logging.error(f"Hiba a Waveshare modul importálásakor: {e}")
+    logging.error("Ellenőrizd, hogy megfelelően telepítetted-e a könyvtárat.")
+    sys.exit(1)
+
+try:
+    logging.info("E-Paper teszt indítása...")
+    
+    # E-Paper inicializálása
+    epd = epd4in01f.EPD()
+    logging.info("Kijelző inicializálása...")
+    epd.init()
+    
+    # Kijelző tisztítása
+    logging.info("Kijelző törlése...")
+    epd.Clear()
+    
+    # Font keresése
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf"
+    ]
+    
+    font = None
+    for path in font_paths:
+        if os.path.exists(path):
+            font = ImageFont.truetype(path, 24)
+            logging.info(f"Betűtípus betöltve: {path}")
+            break
+    
+    if font is None:
+        logging.warning("Nem található megfelelő betűtípus, alapértelmezett használata...")
+        font = ImageFont.load_default()
+    
+    # Teszt kép létrehozása
+    logging.info("Teszt kép létrehozása...")
+    image = Image.new('RGB', (epd.width, epd.height), 'white')
+    draw = ImageDraw.Draw(image)
+    
+    # Teszt minta rajzolása
+    draw.rectangle([(20, 20), (620, 380)], outline='blue')
+    draw.text((180, 120), 'E-Paper Teszt!', font=font, fill='black')
+    draw.text((180, 160), 'A teszt sikeresen fut!', font=font, fill='red')
+    draw.text((180, 200), 'Waveshare 4.01" kijelző', font=font, fill='green')
+    
+    # Ez a kép, ahogy kijelzőre kerül
+    logging.info("Kép megjelenítése a kijelzőn...")
+    epd.display(epd.getbuffer(image))
+    logging.info("A képnek most látszódnia kell a kijelzőn!")
+    
+    # Várunk, hogy lássuk az eredményt
+    time.sleep(5)
+    
+    # Kijelző alvó módba helyezése
+    logging.info("Kijelző alvó módba helyezése...")
+    epd.sleep()
+    
+    logging.info("Teszt sikeresen befejezve!")
+    
+except Exception as e:
+    logging.error(f"Hiba a teszt során: {e}")
+    sys.exit(1)
+EOL
+
+# Teszt futtathatóvá tétele
+chmod +x epaper_test.py
 
 # ===================================================
-# 6. Konfiguráció mentése
+# 5. Konfiguráció mentése
 # ===================================================
-log_section "6. Konfiguráció létrehozása"
+log_section "5. Konfiguráció létrehozása"
 
 log_info "config.ini létrehozása..."
 cat > config.ini << 'EOL'
@@ -1165,7 +1081,7 @@ debug = false
 EOL
 
 # ===================================================
-# 7. Konfigurációt betöltő szkript
+# 6. Konfigurációt betöltő szkript
 # ===================================================
 log_info "config_loader.py létrehozása..."
 cat > config_loader.py << 'EOL'
@@ -1223,7 +1139,7 @@ if __name__ == "__main__":
 EOL
 
 # ===================================================
-# 8. Fő program létrehozása a konfigurációs betöltéssel
+# 7. Fő program létrehozása a konfigurációs betöltéssel
 # ===================================================
 log_info "display_app.py fő alkalmazás létrehozása..."
 cat > display_app.py << 'EOL'
@@ -1267,6 +1183,37 @@ EOL
 
 # Futtathatóvá tesszük
 chmod +x display_app.py
+
+# ===================================================
+# 8. Systemd service létrehozása
+# ===================================================
+log_section "8. Systemd szolgáltatás létrehozása"
+
+log_info "epaper_display.service létrehozása..."
+cat > epaper_display.service << 'EOL'
+[Unit]
+Description=E-Paper Display Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/epaper_display
+ExecStart=/usr/bin/python3 /home/pi/epaper_display/display_app.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=epaper_display
+
+[Install]
+WantedBy=multi-user.target
+EOL
+
+log_info "Szolgáltatás telepítése..."
+sudo mv epaper_display.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable epaper_display.service
 
 # ===================================================
 # 9. Uninstall script létrehozása
@@ -1333,21 +1280,15 @@ fi
 log_section "1. Kijelző tisztítása és szolgáltatás leállítása"
 
 # 1.1 Próbáljuk meg tisztán leállítani a kijelzőt
-if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/venv/bin/python" ]; then
+if [ -d "$INSTALL_DIR" ]; then
     log_info "Kijelző tisztítása..."
     cd "$INSTALL_DIR"
-    source venv/bin/activate 2>/dev/null || true
-    python -c '
+    python3 -c '
 import sys
 try:
     # Kísérlet a Waveshare könyvtár keresésére és használatára
-    paths = ["e-Paper/RaspberryPi_JetsonNano/python/lib", 
-            "e-Paper/RaspberryPi/python/lib", 
-            "waveshare_epd"]
-    
-    for path in paths:
-        if path not in sys.path:
-            sys.path.append(path)
+    import os
+    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "waveshare_epd"))
     
     try:
         from waveshare_epd import epd4in01f
@@ -1399,40 +1340,9 @@ EOL
 chmod +x uninstall.sh
 
 # ===================================================
-# 10. systemd service létrehozása
+# 10. URL beállítása
 # ===================================================
-log_section "10. Systemd szolgáltatás létrehozása"
-
-log_info "epaper_display.service létrehozása..."
-cat > epaper_display.service << 'EOL'
-[Unit]
-Description=E-Paper Display Service
-After=network.target
-
-[Service]
-Type=simple
-User=pi
-WorkingDirectory=/home/pi/epaper_display
-ExecStart=/home/pi/epaper_display/venv/bin/python /home/pi/epaper_display/display_app.py
-Restart=always
-RestartSec=30
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=epaper_display
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-log_info "Szolgáltatás telepítése..."
-sudo mv epaper_display.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable epaper_display.service
-
-# ===================================================
-# 11. URL beállítása
-# ===================================================
-log_section "11. Megjelenítendő weboldal beállítása"
+log_section "10. Megjelenítendő weboldal beállítása"
 
 log_info "Most beállíthatod a megjelenítendő weboldal URL-jét."
 log_info "Az alapértelmezett URL: https://example.com"
@@ -1448,17 +1358,16 @@ else
 fi
 
 # ===================================================
-# 12. Tesztelés
+# 11. Tesztelés
 # ===================================================
-log_section "12. E-Paper teszt futtatása"
+log_section "11. E-Paper teszt futtatása"
 
 log_info "Most egy egyszerű teszt indul a kijelző működésének ellenőrzésére!"
 read -p "Futtatod a tesztet? (y/n) " -n 1 -r
 echo    # új sor
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     log_info "Teszt indítása..."
-    source venv/bin/activate
-    python epaper_test.py
+    python3 epaper_test.py
     
     # Ellenőrizzük a teszt sikerességét
     if [ $? -eq 0 ]; then
@@ -1479,6 +1388,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
             else
                 log_warn "Hiba az alkalmazás indításakor."
                 log_warn "Ellenőrizd a szolgáltatás állapotát: sudo systemctl status epaper_display.service"
+                log_warn "Naplófájl megtekintése: sudo journalctl -u epaper_display.service -f"
             fi
         else
             log_info "Az alkalmazás indítása kihagyva. Később a következő paranccsal indíthatod el:"
@@ -1505,6 +1415,7 @@ else
         else
             log_warn "Hiba az alkalmazás indításakor."
             log_warn "Ellenőrizd a szolgáltatás állapotát: sudo systemctl status epaper_display.service"
+            log_warn "Naplófájl megtekintése: sudo journalctl -u epaper_display.service -f"
         fi
     else
         log_info "Az alkalmazás indítása kihagyva. Később a következő paranccsal indíthatod el:"
@@ -1513,12 +1424,15 @@ else
 fi
 
 # ===================================================
-# 13. Összegzés és útmutató
+# 12. Összegzés és útmutató
 # ===================================================
 log_section "Telepítés befejezve!"
 
 log_info "Az E-Paper Display alkalmazás telepítése befejeződött."
-log_info "Az alkalmazás ${CONFIG['update_interval']} percenként frissíti a kijelző tartalmát."
+
+# Olvassuk ki a konfigurációból az update_interval értékét
+update_interval=$(grep -oP 'update_interval\s*=\s*\K\d+' config.ini || echo "5")
+log_info "Az alkalmazás ${update_interval} percenként frissíti a kijelző tartalmát."
 log_info "A rendszer újraindításakor automatikusan újraindul."
 echo ""
 log_info "Hasznos parancsok:"
