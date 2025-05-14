@@ -4,16 +4,21 @@ set -e
 
 echo "Frissítés és függőségek telepítése..."
 sudo apt-get update
-sudo apt-get install -y python3 python3-pip git
-
-echo "Python csomagok telepítése..."
-pip3 install pillow requests
+sudo apt-get install -y python3 python3-pip python3-venv git
 
 APPDIR="/home/pi/weather-epaper"
 PYFILE="$APPDIR/epaper_display.py"
+VENVDIR="$APPDIR/venv"
 
 echo "Alkalmazás mappa létrehozása..."
 mkdir -p "$APPDIR"
+
+echo "Python venv létrehozása..."
+python3 -m venv "$VENVDIR"
+
+echo "Venv aktiválása és csomagok telepítése..."
+"$VENVDIR/bin/pip" install --upgrade pip
+"$VENVDIR/bin/pip" install pillow requests
 
 echo "Waveshare driver letöltése..."
 cd "$APPDIR"
@@ -22,7 +27,6 @@ if [ ! -d "$APPDIR/e-Paper" ]; then
 fi
 
 echo "Python alkalmazás generálása..."
-
 cat > "$PYFILE" << 'EOF'
 # epaper_display.py
 import time
@@ -32,11 +36,9 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import sys
 
-# --- Waveshare driver import ---
 sys.path.append(os.path.join(os.path.dirname(__file__), 'e-Paper/RaspberryPi_JetsonNano/python/lib'))
 from waveshare_epd import epd4in01f
 
-# ----- Felhasználói beállítások -----
 API_KEY = "1e39a49c6785626b3aca124f4d4ce591"
 CITY = "Pécs"
 COUNTRY = "HU"
@@ -48,7 +50,6 @@ W, H = epd.width, epd.height
 
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 SMALL_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-
 font_large = ImageFont.truetype(FONT_PATH, 38)
 font_mid = ImageFont.truetype(FONT_PATH, 22)
 font_small = ImageFont.truetype(SMALL_FONT_PATH, 16)
@@ -58,8 +59,7 @@ def get_weather():
     try:
         url = f"https://api.openweathermap.org/data/2.5/weather?q={CITY},{COUNTRY}&units=metric&appid={API_KEY}&lang=hu"
         resp = requests.get(url, timeout=10)
-        data = resp.json()
-        return data
+        return resp.json()
     except:
         return None
 
@@ -67,13 +67,11 @@ def get_forecast():
     try:
         url = f"https://api.openweathermap.org/data/2.5/forecast?q={CITY},{COUNTRY}&units=metric&appid={API_KEY}&lang=hu"
         resp = requests.get(url, timeout=10)
-        data = resp.json()
-        return data
+        return resp.json()
     except:
         return None
 
 def get_holiday(dt):
-    # fix magyar ünnepek, bővíthető
     mozgok = moving_holidays(dt.year)
     key = dt.strftime("%m-%d")
     fixed = {
@@ -83,14 +81,12 @@ def get_holiday(dt):
     }
     if key in fixed:
         return fixed[key]
-    # mozgó ünnepek
     for name, date in mozgok.items():
         if dt.date() == date:
             return name
     return ""
 
 def moving_holidays(year):
-    # húsvét algoritmus (Gauss)
     a = year % 19
     b = year // 100
     c = year % 100
@@ -122,7 +118,6 @@ def get_weekday_hu(dt):
 def draw_weather(epd, weather, forecast):
     image = Image.new("RGB", (W, H), (255, 255, 255))
     draw = ImageDraw.Draw(image)
-
     now = datetime.datetime.now()
     date_str = now.strftime("%Y. %m.%d. %a")
     holiday = get_holiday(now)
@@ -133,8 +128,6 @@ def draw_weather(epd, weather, forecast):
     else:
         draw.rectangle([0,0,W,35], fill=(0,51,255))
         draw.text((10, 2), date_str, font=font_mid, fill=(255,255,255))
-
-    # Aktuális időjárás
     if weather:
         temp = int(round(weather['main']['temp']))
         desc = weather['weather'][0]['description'].capitalize()
@@ -145,17 +138,11 @@ def draw_weather(epd, weather, forecast):
         draw.text((10,95), f"Szél: {wind} km/h", font=font_mid, fill=(0,0,0))
         draw.text((180,95), f"Párat.: {humid}%", font=font_mid, fill=(0,0,0))
         draw.text((320,95), f"Nyomás: {press} hPa", font=font_mid, fill=(0,0,0))
-        # Ikon (egyszerűsített)
         code = weather['weather'][0]['icon']
-        if "d" in code:
-            color = (255,200,50)
-        else:
-            color = (50,100,255)
+        color = (255,200,50) if "d" in code else (50,100,255)
         draw.ellipse([420,40,490,110], fill=color, outline=(0,0,0), width=2)
     else:
         draw.text((10,40), "Nincs adat", font=font_large, fill=(128,128,128))
-
-    # 4 napos előrejelzés
     if forecast:
         x0 = 20
         dx = 110
@@ -199,7 +186,6 @@ if __name__ == '__main__':
     mainloop()
 EOF
 
-# SYSTEMD service készítése
 SERVICE_FILE="/etc/systemd/system/weather-epaper.service"
 sudo bash -c "cat > $SERVICE_FILE" <<EOF
 [Unit]
@@ -210,7 +196,7 @@ After=network.target
 Type=simple
 User=pi
 WorkingDirectory=$APPDIR
-ExecStart=/usr/bin/python3 $PYFILE
+ExecStart=$VENVDIR/bin/python $PYFILE
 Restart=always
 
 [Install]
