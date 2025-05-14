@@ -31,21 +31,6 @@ try:
     print("E-Paper kijelző sikeresen tisztítva és alvó módba helyezve.")
 except Exception as e:
     print(f"Hiba a kijelző tisztítása során: {e}")
-    print("Próbálkozás alternatív elérési úttal...")
-    
-    # Ha nem találjuk közvetlenül, megpróbáljuk az e-Paper könyvtárból
-    libdir = os.path.join(os.path.dirname(os.path.realpath('__file__')), 'e-Paper/RaspberryPi/python/lib')
-    if os.path.exists(libdir):
-        sys.path.append(libdir)
-        try:
-            from waveshare_epd import epd4in01f
-            epd = epd4in01f.EPD()
-            epd.init()
-            epd.Clear()
-            epd.sleep()
-            print("E-Paper kijelző sikeresen tisztítva és alvó módba helyezve.")
-        except Exception as e:
-            print(f"Még mindig hiba a kijelző tisztítása során: {e}")
 EOL
 fi
 
