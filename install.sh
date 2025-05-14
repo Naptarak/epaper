@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ===============================================================
-# E-Paper Időjárás Display Telepítő
+# E-Paper Display Telepítő
 # Waveshare 4.01" E-Paper HAT (F) kijelzőhöz
 # Raspberry Pi Zero 2W-re optimalizálva
 # ===============================================================
@@ -33,7 +33,7 @@ log_section() {
     echo -e "${BLUE}====== $1 ======${NC}"
 }
 
-INSTALL_DIR=~/epaper_weather
+INSTALL_DIR=~/epaper_display
 USE_DIRECT_DRIVER=false
 
 # Ellenőrizze, hogy root jogosultság nélkül futtatják-e
@@ -43,9 +43,9 @@ if [ "$EUID" -eq 0 ]; then
 fi
 
 clear
-log_section "E-Paper Időjárás Display Telepítő"
+log_section "E-Paper Display Telepítő"
 log_info "Telepítési könyvtár: $INSTALL_DIR"
-log_info "Ez a telepítő beállítja az időjárás kijelzőt a Waveshare 4.01\" E-Paper HAT (F) kijelzőhöz"
+log_info "Ez a telepítő beállítja a kijelzőt a Waveshare 4.01\" E-Paper HAT (F) kijelzőhöz"
 
 # ===================================================
 # 1. Előfeltételek ellenőrzése
@@ -60,7 +60,7 @@ sudo apt-get upgrade -y python3 python3-pip
 
 # 1.2 Szükséges csomagok telepítése
 log_info "Szükséges csomagok telepítése..."
-sudo apt-get install -y python3-pip python3-pil python3-numpy git python3-rpi.gpio python3-spidev python3-venv
+sudo apt-get install -y python3-pip python3-pil python3-numpy git python3-rpi.gpio python3-spidev python3-venv python3-gpiozero python3-bs4 python3-html5lib python3-lxml
 
 # 1.3 SPI interfész ellenőrzése
 log_info "SPI interfész ellenőrzése..."
@@ -133,9 +133,9 @@ except Exception as e:
         fi
         
         # Állítsuk le a szolgáltatást, ha fut
-        sudo systemctl stop weather_display.service 2>/dev/null || true
-        sudo systemctl disable weather_display.service 2>/dev/null || true
-        sudo rm -f /etc/systemd/system/weather_display.service 2>/dev/null || true
+        sudo systemctl stop epaper_display.service 2>/dev/null || true
+        sudo systemctl disable epaper_display.service 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/epaper_display.service 2>/dev/null || true
         sudo systemctl daemon-reload 2>/dev/null || true
         
         # Könyvtár törlése
@@ -160,7 +160,7 @@ pip install --upgrade pip
 
 # 2.4 Szükséges Python csomagok telepítése
 log_info "Python csomagok telepítése..."
-pip install pillow numpy requests schedule RPi.GPIO spidev
+pip install pillow numpy requests schedule RPi.GPIO spidev gpiozero beautifulsoup4 html5lib lxml
 
 # ===================================================
 # 3. Waveshare e-Paper könyvtár telepítése
@@ -388,6 +388,7 @@ EOL
 
 import logging
 from . import epdconfig
+from PIL import Image
 
 # Display resolution
 EPD_WIDTH  = 640
@@ -713,49 +714,744 @@ EOL
 chmod +x epaper_test.py
 
 # ===================================================
-# A többi rész ugyanaz marad, mint az eredeti szkriptben
+# 5. Fő alkalmazás létrehozása - HTML Megjelenítő
 # ===================================================
+log_section "5. HTML Megjelenítő Alkalmazás Létrehozása"
 
-# ... [TOVÁBBI LÉPÉSEK AZ EREDETIBŐL] ...
+log_info "html_display.py létrehozása..."
+cat > html_display.py << 'EOL'
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+
+import logging
+import time
+import sys
+import os
+import requests
+import schedule
+import traceback
+from PIL import Image, ImageDraw, ImageFont
+from bs4 import BeautifulSoup
+from io import BytesIO
+import signal
+import datetime
+import re
+from urllib.parse import urljoin
+
+# Konfiguráció
+CONFIG = {
+    "url": "https://example.com", # Ezt később felülírhatod
+    "update_interval": 5,  # percekben
+    "font_sizes": {
+        "title": 32,
+        "heading": 26,
+        "normal": 18,
+        "small": 14
+    },
+    "max_content_length": 2000,  # Ennyi karaktert próbálunk max megjeleníteni
+    "debug": False
+}
+
+# Logging beállítása
+if CONFIG["debug"]:
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+else:
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Színek definiálása
+COLORS = {
+    "white": (255, 255, 255),
+    "black": (0, 0, 0),
+    "red": (255, 0, 0),
+    "green": (0, 255, 0),
+    "blue": (0, 0, 255),
+    "yellow": (255, 255, 0),
+    "orange": (255, 165, 0),
+    "background": (255, 255, 255)
+}
+
+# Globális változók
+epd = None
+fonts = {}
+shutdown_flag = False
+
+# Waveshare könyvtár importálása
+try:
+    paths_to_try = [
+        'e-Paper/RaspberryPi_JetsonNano/python/lib',
+        'e-Paper/RaspberryPi/python/lib',
+        '.',
+    ]
+    
+    for path in paths_to_try:
+        if os.path.exists(path) and path not in sys.path:
+            sys.path.append(path)
+    
+    from waveshare_epd import epd4in01f
+    logger.info("Waveshare modul sikeresen importálva")
+except ImportError as e:
+    logger.error(f"Hiba a Waveshare modul importálásakor: {e}")
+    logger.error("Ellenőrizd, hogy megfelelően telepítetted-e a könyvtárat.")
+    sys.exit(1)
+
+# Betűtípusok betöltése
+def load_fonts():
+    global fonts
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf"
+    ]
+    
+    font_path = None
+    for path in font_paths:
+        if os.path.exists(path):
+            font_path = path
+            break
+    
+    if font_path is None:
+        logger.warning("Nem található megfelelő betűtípus, alapértelmezett használata...")
+        for size_name, size in CONFIG["font_sizes"].items():
+            fonts[size_name] = ImageFont.load_default()
+    else:
+        for size_name, size in CONFIG["font_sizes"].items():
+            try:
+                fonts[size_name] = ImageFont.truetype(font_path, size)
+                logger.debug(f"{size_name} betűtípus betöltve ({size}px)")
+            except Exception as e:
+                logger.error(f"Hiba a {size_name} betűtípus betöltésekor: {e}")
+                fonts[size_name] = ImageFont.load_default()
+
+# Kijelző inicializálása
+def init_display():
+    global epd
+    try:
+        epd = epd4in01f.EPD()
+        epd.init()
+        logger.info("E-Paper kijelző inicializálva")
+    except Exception as e:
+        logger.error(f"Hiba a kijelző inicializálásakor: {e}")
+        logger.error(traceback.format_exc())
+        sys.exit(1)
+
+# HTML tartalom lekérése
+def fetch_html_content(url):
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Hiba a HTML letöltésekor: {e}")
+        return None
+
+# HTML feldolgozása
+def parse_html(html_content, base_url):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # Cím kinyerése
+    title = soup.title.string if soup.title else "Nincs cím"
+    
+    # Tartalom előkészítése
+    content = []
+    
+    # Fejléc elemek feldolgozása
+    for heading in soup.find_all(['h1', 'h2', 'h3']):
+        text = heading.get_text(strip=True)
+        if text:
+            tag_type = heading.name
+            content.append({
+                'type': 'heading',
+                'text': text,
+                'level': int(tag_type[1]),
+            })
+    
+    # Bekezdések feldolgozása
+    for paragraph in soup.find_all('p'):
+        text = paragraph.get_text(strip=True)
+        if text:
+            content.append({
+                'type': 'paragraph',
+                'text': text
+            })
+    
+    # Lista elemek feldolgozása
+    for ul in soup.find_all(['ul', 'ol']):
+        for li in ul.find_all('li'):
+            text = li.get_text(strip=True)
+            if text:
+                content.append({
+                    'type': 'list_item',
+                    'text': f"• {text}"
+                })
+    
+    # Képek feldolgozása (csak linkeket mentjük, nem töltjük le most)
+    for img in soup.find_all('img'):
+        if img.get('src'):
+            img_url = urljoin(base_url, img.get('src'))
+            content.append({
+                'type': 'image',
+                'url': img_url,
+                'alt': img.get('alt', 'Kép')
+            })
+    
+    # Feldolgozás limitálása
+    total_length = 0
+    limited_content = []
+    for item in content:
+        if 'text' in item:
+            total_length += len(item['text'])
+        if total_length > CONFIG["max_content_length"]:
+            break
+        limited_content.append(item)
+    
+    return title, limited_content
+
+# Kép rajzolása a kijelzőre
+def draw_content(title, content_items):
+    # Kép létrehozása
+    image = Image.new('RGB', (epd4in01f.EPD_WIDTH, epd4in01f.EPD_HEIGHT), COLORS["background"])
+    draw = ImageDraw.Draw(image)
+    
+    # Cím megjelenítése
+    draw.rectangle([(0, 0), (epd4in01f.EPD_WIDTH, 50)], fill=COLORS["blue"])
+    draw.text((10, 10), title, font=fonts["title"], fill=COLORS["white"])
+    
+    # Frissítési idő kiírása
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    draw.text((epd4in01f.EPD_WIDTH - 200, 10), f"Frissítve: {current_time}", 
+              font=fonts["small"], fill=COLORS["white"])
+    
+    # Tartalom kirajzolása
+    y_position = 60
+    for item in content_items:
+        if item['type'] == 'heading':
+            level = item.get('level', 1)
+            color = COLORS["black"]
+            if level == 1:
+                font_key = "heading"
+                color = COLORS["red"]
+            else:
+                font_key = "heading" if level == 2 else "normal"
+            
+            # Hosszú címsorok tördelése
+            text = item['text']
+            max_width = epd4in01f.EPD_WIDTH - 20
+            
+            # Felosztás sorokra, ha nem fér ki
+            words = text.split()
+            lines = []
+            current_line = []
+            
+            for word in words:
+                test_line = " ".join(current_line + [word])
+                width = fonts[font_key].getbbox(test_line)[2]
+                if width <= max_width:
+                    current_line.append(word)
+                else:
+                    lines.append(" ".join(current_line))
+                    current_line = [word]
+            
+            if current_line:
+                lines.append(" ".join(current_line))
+            
+            for line in lines:
+                draw.text((10, y_position), line, font=fonts[font_key], fill=color)
+                y_position += fonts[font_key].getbbox(line)[3] + 5
+            
+            y_position += 10
+            
+        elif item['type'] == 'paragraph':
+            # Bekezdés szövegének tördelése
+            text = item['text']
+            max_width = epd4in01f.EPD_WIDTH - 20
+            font_key = "normal"
+            
+            words = text.split()
+            lines = []
+            current_line = []
+            
+            for word in words:
+                test_line = " ".join(current_line + [word])
+                width = fonts[font_key].getbbox(test_line)[2]
+                if width <= max_width:
+                    current_line.append(word)
+                else:
+                    lines.append(" ".join(current_line))
+                    current_line = [word]
+            
+            if current_line:
+                lines.append(" ".join(current_line))
+            
+            for line in lines:
+                draw.text((10, y_position), line, font=fonts[font_key], fill=COLORS["black"])
+                y_position += fonts[font_key].getbbox(line)[3] + 5
+            
+            y_position += 10
+            
+        elif item['type'] == 'list_item':
+            # Lista elem kiíratása
+            text = item['text']
+            max_width = epd4in01f.EPD_WIDTH - 20
+            font_key = "normal"
+            
+            words = text.split()
+            lines = []
+            current_line = []
+            
+            for word in words:
+                test_line = " ".join(current_line + [word])
+                width = fonts[font_key].getbbox(test_line)[2]
+                if width <= max_width:
+                    current_line.append(word)
+                else:
+                    lines.append(" ".join(current_line))
+                    current_line = [word]
+            
+            if current_line:
+                lines.append(" ".join(current_line))
+            
+            for i, line in enumerate(lines):
+                if i == 0:  # Első sor listajellel
+                    draw.text((10, y_position), line, font=fonts[font_key], fill=COLORS["black"])
+                else:  # Többi sor behúzással
+                    draw.text((30, y_position), line, font=fonts[font_key], fill=COLORS["black"])
+                
+                y_position += fonts[font_key].getbbox(line)[3] + 5
+            
+            y_position += 5
+            
+        elif item['type'] == 'image':
+            # Kép helyének jelzése (magát a képet most nem jelenítjük meg)
+            draw.text((10, y_position), f"[Kép: {item['alt']}]", font=fonts["small"], fill=COLORS["blue"])
+            y_position += fonts["small"].getbbox(f"[Kép: {item['alt']}]")[3] + 10
+        
+        # Ellenőrizzük, hogy kifutunk-e a képernyőről
+        if y_position > epd4in01f.EPD_HEIGHT - 30:
+            # Ha kifutnánk, akkor egy figyelmeztetést írunk a képernyő aljára
+            draw.rectangle([(0, epd4in01f.EPD_HEIGHT - 30), (epd4in01f.EPD_WIDTH, epd4in01f.EPD_HEIGHT)], 
+                         fill=COLORS["yellow"])
+            draw.text((10, epd4in01f.EPD_HEIGHT - 25), 
+                     "További tartalom nem fért ki a kijelzőre...", 
+                     font=fonts["small"], fill=COLORS["black"])
+            break
+    
+    # Lábléc rajzolása
+    if y_position <= epd4in01f.EPD_HEIGHT - 30:
+        draw.line([(0, epd4in01f.EPD_HEIGHT - 30), (epd4in01f.EPD_WIDTH, epd4in01f.EPD_HEIGHT - 30)], 
+                fill=COLORS["blue"], width=2)
+        draw.text((10, epd4in01f.EPD_HEIGHT - 25), 
+                 f"Automatikus frissítés {CONFIG['update_interval']} percenként", 
+                 font=fonts["small"], fill=COLORS["blue"])
+    
+    return image
+
+# Megjelenítés a kijelzőn
+def update_display():
+    global shutdown_flag
+    if shutdown_flag:
+        return
+    
+    try:
+        logger.info(f"HTML tartalom lekérése innen: {CONFIG['url']}")
+        html_content = fetch_html_content(CONFIG['url'])
+        
+        if html_content is None:
+            logger.error("Nem sikerült letölteni a HTML tartalmat")
+            # Hiba kijelzése a képernyőn
+            image = Image.new('RGB', (epd4in01f.EPD_WIDTH, epd4in01f.EPD_HEIGHT), COLORS["white"])
+            draw = ImageDraw.Draw(image)
+            draw.text((50, 50), "Hiba történt a weboldal letöltésekor!", font=fonts["heading"], fill=COLORS["red"])
+            draw.text((50, 100), f"URL: {CONFIG['url']}", font=fonts["normal"], fill=COLORS["black"])
+            draw.text((50, 150), f"Következő próbálkozás {CONFIG['update_interval']} perc múlva...", 
+                     font=fonts["normal"], fill=COLORS["black"])
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            draw.text((50, 200), f"Időbélyeg: {current_time}", font=fonts["normal"], fill=COLORS["black"])
+            
+            # Megjelenítés a kijelzőn
+            epd.display(epd.getbuffer(image))
+            return
+        
+        # HTML feldolgozása
+        title, content = parse_html(html_content, CONFIG['url'])
+        
+        # Kép készítése és megjelenítése
+        image = draw_content(title, content)
+        
+        # Kijelzőre küldés
+        logger.info("Tartalom megjelenítése a kijelzőn")
+        epd.display(epd.getbuffer(image))
+        
+        logger.info("Kijelző frissítve")
+        
+    except Exception as e:
+        logger.error(f"Hiba a kijelző frissítésekor: {e}")
+        logger.error(traceback.format_exc())
+
+# Signal handlerek a tiszta leállításhoz
+def signal_handler(sig, frame):
+    global shutdown_flag
+    logger.info("Leállítási jelzés érkezett, tiszta leállítás...")
+    shutdown_flag = True
+    # Törölni próbáljuk a kijelzőt
+    try:
+        if epd:
+            logger.info("Kijelző tisztítása...")
+            epd.init()
+            epd.Clear()
+            epd.sleep()
+    except Exception as e:
+        logger.error(f"Hiba a kijelző tisztításakor: {e}")
+    
+    logger.info("Program leállítva")
+    sys.exit(0)
+
+# Fő funkció
+def main():
+    global CONFIG
+    
+    # Ellenőrizzük, hogy van-e parancssori argumentum URL-ként
+    if len(sys.argv) > 1:
+        CONFIG["url"] = sys.argv[1]
+        logger.info(f"URL parancssori argumentumból: {CONFIG['url']}")
+    
+    # Signal handlerek regisztrálása
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Előkészítés
+    load_fonts()
+    init_display()
+    
+    # Kezdeti tartalom megjelenítése
+    update_display()
+    
+    # Ütemező beállítása a rendszeres frissítéshez
+    schedule.every(CONFIG["update_interval"]).minutes.do(update_display)
+    
+    # Fő loop
+    logger.info(f"Alkalmazás elindult, frissítési időköz: {CONFIG['update_interval']} perc")
+    while not shutdown_flag:
+        schedule.run_pending()
+        time.sleep(1)
+
+if __name__ == "__main__":
+    main()
+EOL
+
+# Futtathatóvá tesszük
+chmod +x html_display.py
 
 # ===================================================
-# 7. Systemd service létrehozása
+# 6. Konfiguráció mentése
 # ===================================================
-log_section "7. Systemd szolgáltatás létrehozása"
+log_section "6. Konfiguráció létrehozása"
 
-log_info "weather_display.service létrehozása..."
-cat > weather_display.service << 'EOL'
+log_info "config.ini létrehozása..."
+cat > config.ini << 'EOL'
+[Display]
+# A megjelenítendő weboldal URL-je
+url = https://example.com
+
+# Frissítési időköz percekben
+update_interval = 5
+
+# Debug mód (true/false)
+debug = false
+EOL
+
+# ===================================================
+# 7. Konfigurációt betöltő szkript
+# ===================================================
+log_info "config_loader.py létrehozása..."
+cat > config_loader.py << 'EOL'
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+
+import configparser
+import os
+import sys
+import logging
+
+def load_config():
+    """Konfiguráció betöltése a config.ini fájlból"""
+    config = {
+        "url": "https://example.com",
+        "update_interval": 5,
+        "debug": False
+    }
+    
+    config_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.ini')
+    
+    if os.path.exists(config_file):
+        try:
+            parser = configparser.ConfigParser()
+            parser.read(config_file)
+            
+            if 'Display' in parser:
+                if 'url' in parser['Display']:
+                    config["url"] = parser['Display']['url']
+                
+                if 'update_interval' in parser['Display']:
+                    try:
+                        config["update_interval"] = int(parser['Display']['update_interval'])
+                    except ValueError:
+                        print(f"Figyelem: Érvénytelen frissítési időköz a konfigurációs fájlban, alapértelmezett használata: {config['update_interval']}")
+                
+                if 'debug' in parser['Display']:
+                    config["debug"] = parser['Display']['debug'].lower() in ('true', 'yes', '1', 'on')
+            
+            print(f"Konfiguráció betöltve: {config}")
+            return config
+        except Exception as e:
+            print(f"Hiba a konfigurációs fájl betöltésekor: {e}")
+            return config
+    else:
+        print(f"Figyelem: A konfigurációs fájl nem található ({config_file}), alapértelmezett beállítások használata")
+        return config
+
+if __name__ == "__main__":
+    # Teszt a konfiguráció betöltésére
+    config = load_config()
+    print(f"URL: {config['url']}")
+    print(f"Frissítési időköz: {config['update_interval']} perc")
+    print(f"Debug mód: {'Bekapcsolva' if config['debug'] else 'Kikapcsolva'}")
+EOL
+
+# ===================================================
+# 8. Fő program létrehozása a konfigurációs betöltéssel
+# ===================================================
+log_info "display_app.py fő alkalmazás létrehozása..."
+cat > display_app.py << 'EOL'
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+
+import os
+import sys
+import time
+import signal
+import logging
+import traceback
+from config_loader import load_config
+
+# Konfiguráció betöltése
+config = load_config()
+
+# A konfigurációs adatok átadása a HTML megjelenítőnek
+if __name__ == "__main__":
+    try:
+        # Python elérési útvonal beállítása
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.append(current_dir)
+        
+        # HTML megjelenítő importálása
+        from html_display import CONFIG, main
+        
+        # Konfiguráció átadása
+        CONFIG["url"] = config["url"]
+        CONFIG["update_interval"] = config["update_interval"]
+        CONFIG["debug"] = config["debug"]
+        
+        # Fő program indítása
+        main()
+    except Exception as e:
+        logging.error(f"Hiba az alkalmazás indításakor: {e}")
+        logging.error(traceback.format_exc())
+        sys.exit(1)
+EOL
+
+# Futtathatóvá tesszük
+chmod +x display_app.py
+
+# ===================================================
+# 9. Uninstall script létrehozása
+# ===================================================
+log_section "9. Eltávolító script létrehozása"
+
+log_info "uninstall.sh létrehozása..."
+cat > uninstall.sh << 'EOL'
+#!/bin/bash
+
+# ===============================================================
+# E-Paper Display Eltávolító
+# Waveshare 4.01" E-Paper HAT (F) kijelző alkalmazás eltávolítása
+# ===============================================================
+
+# Színek a jobb olvashatóságért
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+
+# Log funkcók
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[FIGYELEM]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[HIBA]${NC} $1"
+}
+
+log_section() {
+    echo ""
+    echo -e "${BLUE}====== $1 ======${NC}"
+}
+
+INSTALL_DIR=~/epaper_display
+
+# Ellenőrizze, hogy root jogosultság nélkül futtatják-e
+if [ "$EUID" -eq 0 ]; then
+    log_error "Ezt a szkriptet NE root-ként futtasd! Használd normál felhasználóként."
+    exit 1
+fi
+
+clear
+log_section "E-Paper Display Eltávolító"
+
+# Megerősítés kérése
+log_warn "Ez a script eltávolítja az E-Paper Display alkalmazást és minden kapcsolódó fájlt."
+read -p "Biztosan folytatni szeretnéd? (y/n) " -n 1 -r
+echo    # új sor
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    log_info "Eltávolítás megszakítva."
+    exit 0
+fi
+
+# ===================================================
+# 1. Kijelző tisztítása és szolgáltatás leállítása
+# ===================================================
+log_section "1. Kijelző tisztítása és szolgáltatás leállítása"
+
+# 1.1 Próbáljuk meg tisztán leállítani a kijelzőt
+if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/venv/bin/python" ]; then
+    log_info "Kijelző tisztítása..."
+    cd "$INSTALL_DIR"
+    source venv/bin/activate 2>/dev/null || true
+    python -c '
+import sys
+try:
+    # Kísérlet a Waveshare könyvtár keresésére és használatára
+    paths = ["e-Paper/RaspberryPi_JetsonNano/python/lib", 
+            "e-Paper/RaspberryPi/python/lib", 
+            "waveshare_epd"]
+    
+    for path in paths:
+        if path not in sys.path:
+            sys.path.append(path)
+    
+    try:
+        from waveshare_epd import epd4in01f
+        epd = epd4in01f.EPD()
+        epd.init()
+        epd.Clear()
+        epd.sleep()
+        print("E-Paper kijelző sikeresen leállítva.")
+    except Exception as e:
+        print(f"Hiba a kijelző leállításakor: {e}")
+except Exception as e:
+    print(f"Hiba: {e}")
+' 2>/dev/null || true
+fi
+
+# 1.2 Szolgáltatás leállítása és eltávolítása
+log_info "Szolgáltatás leállítása és eltávolítása..."
+sudo systemctl stop epaper_display.service 2>/dev/null || true
+sudo systemctl disable epaper_display.service 2>/dev/null || true
+sudo rm -f /etc/systemd/system/epaper_display.service 2>/dev/null || true
+sudo systemctl daemon-reload 2>/dev/null || true
+log_info "Szolgáltatás sikeresen eltávolítva."
+
+# ===================================================
+# 2. Telepítési könyvtár eltávolítása
+# ===================================================
+log_section "2. Telepítési könyvtár eltávolítása"
+
+if [ -d "$INSTALL_DIR" ]; then
+    log_info "Telepítési könyvtár törlése: $INSTALL_DIR"
+    rm -rf "$INSTALL_DIR"
+    log_info "Telepítési könyvtár sikeresen törölve."
+else
+    log_warn "A telepítési könyvtár ($INSTALL_DIR) nem található."
+fi
+
+# ===================================================
+# 3. Összegzés
+# ===================================================
+log_section "Eltávolítás befejezve!"
+
+log_info "Az E-Paper Display alkalmazás sikeresen eltávolítva."
+log_info "Ha újra szeretnéd telepíteni, futtasd az install.sh szkriptet."
+
+exit 0
+EOL
+
+# Futtathatóvá tesszük
+chmod +x uninstall.sh
+
+# ===================================================
+# 10. systemd service létrehozása
+# ===================================================
+log_section "10. Systemd szolgáltatás létrehozása"
+
+log_info "epaper_display.service létrehozása..."
+cat > epaper_display.service << 'EOL'
 [Unit]
-Description=E-Paper Weather Display
+Description=E-Paper Display Service
 After=network.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/epaper_weather
-ExecStart=/home/pi/epaper_weather/venv/bin/python /home/pi/epaper_weather/weather_display.py
+WorkingDirectory=/home/pi/epaper_display
+ExecStart=/home/pi/epaper_display/venv/bin/python /home/pi/epaper_display/display_app.py
 Restart=always
-RestartSec=10
+RestartSec=30
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=weather_display
+SyslogIdentifier=epaper_display
 
 [Install]
 WantedBy=multi-user.target
 EOL
 
 log_info "Szolgáltatás telepítése..."
-sudo mv weather_display.service /etc/systemd/system/
+sudo mv epaper_display.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable weather_display.service
+sudo systemctl enable epaper_display.service
 
 # ===================================================
-# 8. Tesztelés
+# 11. URL beállítása
 # ===================================================
-log_section "8. E-Paper teszt futtatása"
+log_section "11. Megjelenítendő weboldal beállítása"
+
+log_info "Most beállíthatod a megjelenítendő weboldal URL-jét."
+log_info "Az alapértelmezett URL: https://example.com"
+log_info "Üresen hagyva az alapértelmezett URL marad."
+
+read -p "Kérlek add meg a megjelenítendő weboldal URL-jét: " user_url
+if [ -n "$user_url" ]; then
+    # Frissítsük a konfigurációs fájlt
+    sed -i "s|url = .*|url = $user_url|g" config.ini
+    log_info "URL beállítva: $user_url"
+else
+    log_info "Az alapértelmezett URL maradt érvényben."
+fi
+
+# ===================================================
+# 12. Tesztelés
+# ===================================================
+log_section "12. E-Paper teszt futtatása"
 
 log_info "Most egy egyszerű teszt indul a kijelző működésének ellenőrzésére!"
-log_info "Ez segít ellenőrizni, hogy a telepítés sikeres volt-e, és a kijelző működik-e."
 read -p "Futtatod a tesztet? (y/n) " -n 1 -r
 echo    # új sor
 if [[ $REPLY =~ ^[Yy]$ ]]; then
@@ -767,46 +1463,69 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     if [ $? -eq 0 ]; then
         log_info "Teszt sikeresen lefutott!"
         log_info "Ha a kijelzőn megjelent a teszt kép, a telepítés sikeres volt."
+        
+        # Megkérdezzük, indítsuk-e az alkalmazást
+        read -p "Elindítsuk az alkalmazást? (y/n) " -n 1 -r
+        echo    # új sor
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            log_info "Alkalmazás indítása..."
+            sudo systemctl start epaper_display.service
+            
+            # Ellenőrizzük, hogy sikeresen elindult-e
+            sleep 2
+            if sudo systemctl is-active --quiet epaper_display.service; then
+                log_info "Alkalmazás sikeresen elindult!"
+            else
+                log_warn "Hiba az alkalmazás indításakor."
+                log_warn "Ellenőrizd a szolgáltatás állapotát: sudo systemctl status epaper_display.service"
+            fi
+        else
+            log_info "Az alkalmazás indítása kihagyva. Később a következő paranccsal indíthatod el:"
+            log_info "sudo systemctl start epaper_display.service"
+        fi
     else
         log_error "Hiba történt a teszt futtatása közben!"
         log_error "Ellenőrizd a fenti hibaüzeneteket."
-        log_error "A telepítés folytatódik, de előfordulhat, hogy a kijelző nem fog megfelelően működni."
     fi
 else
     log_info "Teszt kihagyva."
+    
+    # Megkérdezzük, indítsuk-e az alkalmazást teszt nélkül
+    read -p "Elindítsuk az alkalmazást teszt nélkül? (y/n) " -n 1 -r
+    echo    # új sor
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Alkalmazás indítása..."
+        sudo systemctl start epaper_display.service
+        
+        # Ellenőrizzük, hogy sikeresen elindult-e
+        sleep 2
+        if sudo systemctl is-active --quiet epaper_display.service; then
+            log_info "Alkalmazás sikeresen elindult!"
+        else
+            log_warn "Hiba az alkalmazás indításakor."
+            log_warn "Ellenőrizd a szolgáltatás állapotát: sudo systemctl status epaper_display.service"
+        fi
+    else
+        log_info "Az alkalmazás indítása kihagyva. Később a következő paranccsal indíthatod el:"
+        log_info "sudo systemctl start epaper_display.service"
+    fi
 fi
 
 # ===================================================
-# 9. Alkalmazás indítása
-# ===================================================
-log_section "9. Időjárás alkalmazás indítása"
-
-log_info "Az időjárás alkalmazás indítása..."
-sudo systemctl start weather_display.service
-
-# Ellenőrizzük, hogy sikeresen elindult-e
-sleep 2
-if sudo systemctl is-active --quiet weather_display.service; then
-    log_info "Időjárás alkalmazás sikeresen elindult!"
-else
-    log_warn "Hiba az időjárás alkalmazás indításakor."
-    log_warn "Ellenőrizd a szolgáltatás állapotát: sudo systemctl status weather_display.service"
-fi
-
-# ===================================================
-# 10. Összegzés és útmutató
+# 13. Összegzés és útmutató
 # ===================================================
 log_section "Telepítés befejezve!"
 
-log_info "Az időjárás alkalmazás telepítése befejeződött."
-log_info "Az alkalmazás automatikusan elindult és 5 percenként frissül."
+log_info "Az E-Paper Display alkalmazás telepítése befejeződött."
+log_info "Az alkalmazás ${CONFIG['update_interval']} percenként frissíti a kijelző tartalmát."
 log_info "A rendszer újraindításakor automatikusan újraindul."
 echo ""
 log_info "Hasznos parancsok:"
-echo "- Állapot ellenőrzése: sudo systemctl status weather_display.service"
-echo "- Naplók megtekintése: sudo journalctl -u weather_display -f"
-echo "- Újraindítás:         sudo systemctl restart weather_display.service"
-echo "- Eltávolítás:         ~/epaper_weather/uninstall.sh"
+echo "- Állapot ellenőrzése:  sudo systemctl status epaper_display.service"
+echo "- Naplók megtekintése:  sudo journalctl -u epaper_display -f"
+echo "- Újraindítás:          sudo systemctl restart epaper_display.service"
+echo "- URL módosítása:       nano $INSTALL_DIR/config.ini"
+echo "- Eltávolítás:          $INSTALL_DIR/uninstall.sh"
 echo ""
 log_info "Ha bármilyen probléma merülne fel, próbáld újraindítani a rendszert."
 
