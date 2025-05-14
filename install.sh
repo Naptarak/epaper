@@ -58,9 +58,10 @@ sudo apt-get update -y
 # Kötelező csomagok frissítése csak, hogy ne tartson sokáig
 sudo apt-get upgrade -y python3 python3-pip
 
-# 1.2 Szükséges csomagok telepítése
+# 1.2 Szükséges csomagok telepítése - JAVÍTVA a hiányzó csomagokkal
 log_info "Szükséges csomagok telepítése..."
-sudo apt-get install -y python3-pip python3-pil python3-numpy git python3-rpi.gpio python3-spidev python3-venv python3-gpiozero python3-bs4 python3-html5lib python3-lxml
+sudo apt-get install -y python3-pip python3-pil python3-numpy git python3-rpi.gpio python3-spidev python3-venv python3-gpiozero libxml2-dev libxslt-dev python3-dev libffi-dev build-essential
+sudo apt-get install -y python3-bs4 python3-html5lib python3-lxml || log_warn "Nem sikerült telepíteni a Python csomagokat apt-get segítségével, később pip-pel próbáljuk"
 
 # 1.3 SPI interfész ellenőrzése
 log_info "SPI interfész ellenőrzése..."
