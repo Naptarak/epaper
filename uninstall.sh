@@ -1,3 +1,6 @@
+cd ~/epaper_weather
+
+cat > uninstall.sh << 'EOL'
 #!/bin/bash
 
 # E-Paper Időjárás Display Eltávolító
@@ -18,10 +21,11 @@ echo "[2/3] E-Paper kijelző tisztítása..."
 cd ~/epaper_weather
 if [ -f "venv/bin/python" ]; then
     source venv/bin/activate
-    python3 - << 'EOL'
+    python3 - << 'EOPY'
 import sys, os
 
-# Keressük a waveshare_epd modult
+# Waveshare e-Paper modul betöltése
+sys.path.append('e-Paper/RaspberryPi_JetsonNano/python/lib')
 try:
     from waveshare_epd import epd4in01f
     epd = epd4in01f.EPD()
@@ -31,7 +35,7 @@ try:
     print("E-Paper kijelző sikeresen tisztítva és alvó módba helyezve.")
 except Exception as e:
     print(f"Hiba a kijelző tisztítása során: {e}")
-EOL
+EOPY
 fi
 
 # Fájlok törlése
@@ -42,3 +46,6 @@ echo "=========================================================="
 echo "     Eltávolítás befejezve!                              "
 echo "     Az időjárás alkalmazás eltávolítva a rendszerről.    "
 echo "=========================================================="
+EOL
+
+chmod +x uninstall.sh
