@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# E-Paper Időjárás Display Telepítő
+# E-Paper Időjárás Display Telepítő (JAVÍTOTT)
 # Raspberry Pi Zero 2W + Waveshare 4.01" E-Paper HAT (F)
 
 echo "=========================================================="
-echo "     E-Paper Időjárás Display Telepítő                    "
+echo "     E-Paper Időjárás Display Telepítő (JAVÍTOTT)         "
 echo "     Waveshare 4.01\" E-Paper HAT (F) kijelzőhöz          "
 echo "=========================================================="
 
@@ -21,16 +21,21 @@ python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
 
-# Waveshare e-Paper könyvtár letöltése
-echo "[3/6] Waveshare e-Paper könyvtár letöltése..."
+# Waveshare e-Paper könyvtár letöltése és telepítése (JAVÍTOTT)
+echo "[3/6] Waveshare e-Paper könyvtár letöltése (JAVÍTOTT)..."
 git clone https://github.com/waveshare/e-Paper.git
-cd e-Paper
-pip install ./RaspberryPi/python/
+cd e-Paper/RaspberryPi/python
+
+# JAVÍTÁS: Telepítés közvetlenül a könyvtárból, nem pip install-lal
+echo "Waveshare könyvtár másolása a venv site-packages könyvtárba..."
+cp -r ./waveshare_epd ../../../../venv/lib/python*/site-packages/
+cd ../../..
+
+# További szükséges csomagok telepítése
 pip install requests pillow numpy schedule
 
 # Python alkalmazás létrehozása
 echo "[4/6] Python alkalmazás létrehozása..."
-cd ~/epaper_weather
 cat > weather_display.py << 'EOL'
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -46,15 +51,28 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 from math import ceil
 
-# e-Paper 4.01" F előkészítése
-libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'e-Paper/RaspberryPi/python/lib')
-if os.path.exists(libdir):
-    sys.path.append(libdir)
-
-from waveshare_epd import epd4in01f
-
 # Logging beállítása
 logging.basicConfig(level=logging.INFO)
+
+# Direktben importáljuk a waveshare_epd modult
+try:
+    from waveshare_epd import epd4in01f
+    logging.info("Waveshare e-Paper modul sikeresen importálva!")
+except ImportError as e:
+    logging.error(f"Hiba a Waveshare e-Paper modul importálásakor: {e}")
+    logging.info("Alternatív importálási megoldás próbálása...")
+    
+    # Ha az import nem sikerült, próbáljuk meg a könyvtárat manuálisan a sys.path-hoz adni
+    libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'e-Paper/RaspberryPi/python/lib')
+    if os.path.exists(libdir):
+        sys.path.append(libdir)
+        try:
+            from waveshare_epd import epd4in01f
+            logging.info("Waveshare e-Paper modul sikeresen importálva alternatív útvonalon!")
+        except ImportError as e:
+            logging.error(f"Még mindig hiba az importálással: {e}")
+            logging.error("Próbáld meg manuálisan telepíteni a Waveshare e-Paper modult!")
+            sys.exit(1)
 
 # Konfiguráció
 API_KEY = "1e39a49c6785626b3aca124f4d4ce591"  # OpenWeatherMap API kulcs
@@ -115,17 +133,43 @@ ORANGE = 6
 
 class WeatherDisplay:
     def __init__(self):
-        self.epd = epd4in01f.EPD()
-        self.width = self.epd.width
-        self.height = self.epd.height
-        self.fonts = {
-            'small': ImageFont.truetype("e-Paper/RaspberryPi/python/pic/Font.ttc", 16),
-            'medium': ImageFont.truetype("e-Paper/RaspberryPi/python/pic/Font.ttc", 24),
-            'large': ImageFont.truetype("e-Paper/RaspberryPi/python/pic/Font.ttc", 36),
-            'xlarge': ImageFont.truetype("e-Paper/RaspberryPi/python/pic/Font.ttc", 48)
-        }
-        self.init_display()
-        self.create_icons()
+        try:
+            self.epd = epd4in01f.EPD()
+            self.width = self.epd.width
+            self.height = self.epd.height
+            
+            # Font elérési út ellenőrzése és alternatív megoldás
+            font_path = "e-Paper/RaspberryPi/python/pic/Font.ttc"
+            if not os.path.exists(font_path):
+                font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+                if not os.path.exists(font_path):
+                    # Végső fallback, a legtöbb Linux rendszeren elérhető
+                    font_path = "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+                
+            logging.info(f"Font elérési út: {font_path}")
+            
+            if not os.path.exists(font_path):
+                logging.warning(f"Font nem található: {font_path}. Rendszerfontra váltás.")
+                # Ha még mindig nincs font, használjunk alapértelmezett fontot
+                self.fonts = {
+                    'small': ImageFont.load_default(),
+                    'medium': ImageFont.load_default(),
+                    'large': ImageFont.load_default(),
+                    'xlarge': ImageFont.load_default()
+                }
+            else:
+                self.fonts = {
+                    'small': ImageFont.truetype(font_path, 16),
+                    'medium': ImageFont.truetype(font_path, 24),
+                    'large': ImageFont.truetype(font_path, 36),
+                    'xlarge': ImageFont.truetype(font_path, 48)
+                }
+                
+            self.init_display()
+            self.create_icons()
+        except Exception as e:
+            logging.error(f"Inicializálási hiba: {e}")
+            raise
 
     def init_display(self):
         try:
@@ -135,7 +179,7 @@ class WeatherDisplay:
             logging.info("E-Paper kijelző inicializálása kész.")
         except Exception as e:
             logging.error(f"Hiba az e-Paper inicializálása során: {e}")
-            exit(1)
+            raise
 
     def create_icons(self):
         # Ez a függvény egyszerű ikonokat készít az időjárás állapotokhoz
