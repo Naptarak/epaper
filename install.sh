@@ -1,41 +1,390 @@
 #!/bin/bash
 
-# E-Paper Időjárás Display Telepítő (JAVÍTOTT)
+# E-Paper Időjárás Display Telepítő (TELJESEN ÚJRAÍRT)
 # Raspberry Pi Zero 2W + Waveshare 4.01" E-Paper HAT (F)
 
 echo "=========================================================="
-echo "     E-Paper Időjárás Display Telepítő (JAVÍTOTT)         "
+echo "     E-Paper Időjárás Display Telepítő                    "
 echo "     Waveshare 4.01\" E-Paper HAT (F) kijelzőhöz          "
 echo "=========================================================="
 
 # Függőségek telepítése
-echo "[1/6] Függőségek telepítése..."
+echo "[1/7] Függőségek telepítése..."
 sudo apt-get update
-sudo apt-get install -y python3-pip python3-pil python3-numpy git wiringpi python3-venv
+sudo apt-get install -y python3-pip python3-pil python3-numpy git wiringpi python3-venv python3-rpi.gpio
 
 # Python virtuális környezet létrehozása
-echo "[2/6] Python virtuális környezet létrehozása..."
+echo "[2/7] Python virtuális környezet létrehozása..."
 mkdir -p ~/epaper_weather
 cd ~/epaper_weather
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
+pip install requests pillow numpy schedule RPi.GPIO spidev
 
-# Waveshare e-Paper könyvtár letöltése és telepítése (JAVÍTOTT)
-echo "[3/6] Waveshare e-Paper könyvtár letöltése (JAVÍTOTT)..."
-git clone https://github.com/waveshare/e-Paper.git
-cd e-Paper/RaspberryPi/python
+# Waveshare könyvtárszerkezet létrehozása
+echo "[3/7] Waveshare driverek kézi letöltése és telepítése..."
+mkdir -p waveshare_epd
 
-# JAVÍTÁS: Telepítés közvetlenül a könyvtárból, nem pip install-lal
-echo "Waveshare könyvtár másolása a venv site-packages könyvtárba..."
-cp -r ./waveshare_epd ../../../../venv/lib/python*/site-packages/
-cd ../../..
+# Forrás: https://github.com/waveshare/e-Paper/tree/master/RaspberryPi_JetsonNano/python/lib/waveshare_epd
+# epd4in01f.py letöltése közvetlenül
+cat > waveshare_epd/epd4in01f.py << 'EOL'
+# *****************************************************************************
+# * | File        :   epd4in01f.py
+# * | Author      :   Waveshare team
+# * | Function    :   Electronic paper driver
+# * | Info        :
+# *----------------
+# * | This version:   V1.1
+# * | Date        :   2022-08-12
+# # | Info        :   python demo
+# -----------------------------------------------------------------------------
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documnetation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to  whom the Software is
+# furished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS OR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
 
-# További szükséges csomagok telepítése
-pip install requests pillow numpy schedule
+import logging
+from . import epdconfig
+
+# Display resolution
+EPD_WIDTH  = 640
+EPD_HEIGHT = 400
+
+logger = logging.getLogger(__name__)
+
+class EPD:
+    def __init__(self):
+        self.reset_pin = epdconfig.RST_PIN
+        self.dc_pin = epdconfig.DC_PIN
+        self.busy_pin = epdconfig.BUSY_PIN
+        self.cs_pin = epdconfig.CS_PIN
+        self.width = EPD_WIDTH
+        self.height = EPD_HEIGHT
+        
+    # Hardware reset
+    def reset(self):
+        epdconfig.digital_write(self.reset_pin, 1)
+        epdconfig.delay_ms(200) 
+        epdconfig.digital_write(self.reset_pin, 0)
+        epdconfig.delay_ms(1)
+        epdconfig.digital_write(self.reset_pin, 1)
+        epdconfig.delay_ms(200)   
+
+    # send command
+    def send_command(self, command):
+        epdconfig.digital_write(self.dc_pin, 0)
+        epdconfig.digital_write(self.cs_pin, 0)
+        epdconfig.spi_writebyte([command])
+        epdconfig.digital_write(self.cs_pin, 1)
+
+    # send data
+    def send_data(self, data):
+        epdconfig.digital_write(self.dc_pin, 1)
+        epdconfig.digital_write(self.cs_pin, 0)
+        epdconfig.spi_writebyte([data])
+        epdconfig.digital_write(self.cs_pin, 1)
+        
+    # Wait until the busy_pin goes LOW
+    def ReadBusy(self):
+        logger.debug("e-Paper busy")
+        busy = epdconfig.digital_read(self.busy_pin)
+        while(busy == 1):
+            busy = epdconfig.digital_read(self.busy_pin)
+        epdconfig.delay_ms(200)
+            
+    # initialization
+    def init(self):
+        if (epdconfig.module_init() != 0):
+            return -1
+            
+        self.reset()
+        
+        self.send_command(0x00)
+        self.send_data(0x2f)
+        self.send_data(0x00)
+        self.send_command(0x01)
+        self.send_data(0x37)
+        self.send_data(0x00)
+        self.send_data(0x05)
+        self.send_data(0x05)
+        self.send_command(0x03)
+        self.send_data(0x00)
+        self.send_command(0x06)
+        self.send_data(0xC7)
+        self.send_data(0xC7)
+        self.send_data(0x1D)
+        self.send_command(0x41)
+        self.send_data(0x00)
+        self.send_command(0x50)
+        self.send_data(0x37)
+        self.send_command(0x60)
+        self.send_data(0x22)
+        self.send_command(0x61)
+        self.send_data(0x02)
+        self.send_data(0x80)
+        self.send_data(0x01)
+        self.send_data(0x90)
+        self.send_command(0xE3)
+        self.send_data(0xAA)
+        
+        epdconfig.delay_ms(100)
+        self.send_command(0x50)
+        self.send_data(0x37)
+        
+        return 0
+
+    # Drawing on the image
+    def getbuffer(self, image):
+        img = image.convert('RGB')
+        imwidth, imheight = img.size
+        if imwidth == self.width and imheight == self.height:
+            for y in range(imheight):
+                for x in range(imwidth):
+                    # Set buffer to RGBA pixels.
+                    pos = (x + y * self.width) * 2
+                    (r, g, b) = img.getpixel((x, y))
+                    if (r == 0 and g == 0 and b == 0):
+                        self.buffer[pos] = 0x00
+                        self.buffer[pos + 1] = 0x00 #black
+                    elif (r == 255 and g == 255 and b == 255):
+                        self.buffer[pos] = 0xFF
+                        self.buffer[pos + 1] = 0xFF #white
+                    elif (r == 0 and g == 255 and b == 0):
+                        self.buffer[pos] = 0x00
+                        self.buffer[pos + 1] = 0x07 #green
+                    elif (r == 0 and g == 0 and b == 255):
+                        self.buffer[pos] = 0x00
+                        self.buffer[pos + 1] = 0x06 #blue
+                    elif (r == 255 and g == 0 and b == 0):
+                        self.buffer[pos] = 0x00
+                        self.buffer[pos + 1] = 0x05 #red
+                    elif (r == 255 and g == 255 and b == 0):
+                        self.buffer[pos] = 0x00
+                        self.buffer[pos + 1] = 0x02 #yellow
+                    elif (r == 255 and g == 165 and b == 0):
+                        self.buffer[pos] = 0x00
+                        self.buffer[pos + 1] = 0x01 #orange
+            return self.buffer
+        else:
+            buf = [0x00] * int(self.width * self.height * 2)
+            self.buffer = buf
+            img = img.resize((self.width, self.height), Image.BILINEAR)
+            imwidth, imheight = img.size
+            for y in range(imheight):
+                for x in range(imwidth):
+                    # Set buffer to RGBA pixels.
+                    pos = (x + y * self.width) * 2
+                    (r, g, b) = img.getpixel((x, y))
+                    if (r == 0 and g == 0 and b == 0):
+                        buf[pos] = 0x00
+                        buf[pos + 1] = 0x00 #black
+                    elif (r == 255 and g == 255 and b == 255):
+                        buf[pos] = 0xFF
+                        buf[pos + 1] = 0xFF #white
+                    elif (r == 0 and g == 255 and b == 0):
+                        buf[pos] = 0x00
+                        buf[pos + 1] = 0x07 #green
+                    elif (r == 0 and g == 0 and b == 255):
+                        buf[pos] = 0x00
+                        buf[pos + 1] = 0x06 #blue
+                    elif (r == 255 and g == 0 and b == 0):
+                        buf[pos] = 0x00
+                        buf[pos + 1] = 0x05 #red
+                    elif (r == 255 and g == 255 and b == 0):
+                        buf[pos] = 0x00
+                        buf[pos + 1] = 0x02 #yellow
+                    elif (r == 255 and g == 165 and b == 0):
+                        buf[pos] = 0x00
+                        buf[pos + 1] = 0x01 #orange
+                    # else:
+                        # print("Cannot use color conversion")
+                        # buf[pos] = 0xFF
+                        # buf[pos + 1] = 0xFF #white
+            return buf
+            
+    def display(self, buffer):
+        self.send_command(0x61)
+        self.send_data(0x02)
+        self.send_data(0x80)
+        self.send_data(0x01)
+        self.send_data(0x90)
+        
+        self.send_command(0x10)
+        epdconfig.spi_write_bytes(buffer)
+        
+        self.send_command(0x04)
+        self.ReadBusy()
+        self.send_command(0x12)
+        self.ReadBusy()
+        self.send_command(0x02)
+        self.ReadBusy()
+        
+    def Clear(self):
+        buf = [0xFF] * int(self.width * self.height * 2)
+        buf[0] = 0x00
+        buf[1] = 0x00
+        
+        self.send_command(0x61)
+        self.send_data(0x02)
+        self.send_data(0x80)
+        self.send_data(0x01)
+        self.send_data(0x90)
+        
+        self.send_command(0x10)
+        epdconfig.spi_write_bytes(buf)
+        
+        self.send_command(0x04)
+        self.ReadBusy()
+        self.send_command(0x12)
+        self.ReadBusy()
+        self.send_command(0x02)
+        self.ReadBusy()
+
+    def sleep(self):
+        self.send_command(0x07)
+        self.send_data(0xA5)
+        
+        epdconfig.delay_ms(1000)
+        epdconfig.module_exit()
+EOL
+
+# epdconfig.py letöltése
+cat > waveshare_epd/epdconfig.py << 'EOL'
+# /*****************************************************************************
+# * | File        :   epdconfig.py
+# * | Author      :   Waveshare team
+# * | Function    :   Hardware underlying interface
+# * | Info        :
+# *----------------
+# * | This version:   V1.0
+# * | Date        :   2020-12-21
+# * | Info        :   
+# ******************************************************************************
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documnetation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to  whom the Software is
+# furished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS OR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
+
+import os
+import logging
+import sys
+import time
+
+logger = logging.getLogger(__name__)
+
+class RaspberryPi:
+    # Pin definition
+    RST_PIN         = 17
+    DC_PIN          = 25
+    CS_PIN          = 8
+    BUSY_PIN        = 24
+
+    def __init__(self):
+        import spidev
+        import RPi.GPIO
+
+        self.GPIO = RPi.GPIO
+
+        # SPI device, bus = 0, device = 0
+        self.SPI = spidev.SpiDev()
+        self.SPI.open(0, 0)
+        self.SPI.max_speed_hz = 4000000
+        self.SPI.mode = 0b00
+        # self.SPI.lsbfirst = False
+
+    def digital_write(self, pin, value):
+        self.GPIO.output(pin, value)
+
+    def digital_read(self, pin):
+        return self.GPIO.input(pin)
+
+    def delay_ms(self, delaytime):
+        time.sleep(delaytime / 1000.0)
+
+    def spi_writebyte(self, data):
+        self.SPI.writebytes(data)
+
+    def spi_write_bytes(self, data):
+        # logger.debug("Write bytes, len: %d, data: %s", len(data), ' '.join([hex(x) for x in data]))
+        chunks = [data[i:i+4096] for i in range(0, len(data), 4096)]
+        for chunk in chunks:
+            self.SPI.writebytes(chunk)
+        
+    def module_init(self):
+        self.GPIO.setmode(self.GPIO.BCM)
+        self.GPIO.setwarnings(False)
+        self.GPIO.setup(self.RST_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.DC_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.CS_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.BUSY_PIN, self.GPIO.IN)
+        self.GPIO.output(self.CS_PIN, 0)
+        return 0
+
+    def module_exit(self):
+        logger.debug("spi end")
+        self.SPI.close()
+
+        logger.debug("close 5V, Module enters 0 power consumption ...")
+        self.GPIO.output(self.RST_PIN, 0)
+        self.GPIO.output(self.DC_PIN, 0)
+
+        self.GPIO.cleanup([self.RST_PIN, self.DC_PIN, self.CS_PIN, self.BUSY_PIN])
+
+# If do not understand RPi.GPIO, please execute the following command in the terminal:
+# sudo apt-get update
+# sudo apt-get install python-rpi.gpio
+# sudo apt-get install python3-rpi.gpio
+
+# For Jetson Nano
+# sudo apt-get install python-jetson-gpio
+# sudo apt-get install python3-jetson-gpio
+
+implementation = RaspberryPi()
+
+for func in [x for x in dir(implementation) if not x.startswith('_')]:
+    setattr(sys.modules[__name__], func, getattr(implementation, func))
+EOL
+
+# __init__.py létrehozása
+cat > waveshare_epd/__init__.py << 'EOL'
+# Placeholder for package initialization
+EOL
+
+# Telepítés a virtuális környezetbe
+echo "[4/7] Waveshare modulok telepítése a virtuális környezetbe..."
+cp -r waveshare_epd venv/lib/python*/site-packages/
 
 # Python alkalmazás létrehozása
-echo "[4/6] Python alkalmazás létrehozása..."
+echo "[5/7] Python alkalmazás létrehozása..."
 cat > weather_display.py << 'EOL'
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -54,25 +403,13 @@ from math import ceil
 # Logging beállítása
 logging.basicConfig(level=logging.INFO)
 
-# Direktben importáljuk a waveshare_epd modult
+# Waveshare e-Paper modul importálása
 try:
     from waveshare_epd import epd4in01f
-    logging.info("Waveshare e-Paper modul sikeresen importálva!")
+    logging.info("Waveshare e-Paper modul sikeresen importálva")
 except ImportError as e:
     logging.error(f"Hiba a Waveshare e-Paper modul importálásakor: {e}")
-    logging.info("Alternatív importálási megoldás próbálása...")
-    
-    # Ha az import nem sikerült, próbáljuk meg a könyvtárat manuálisan a sys.path-hoz adni
-    libdir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'e-Paper/RaspberryPi/python/lib')
-    if os.path.exists(libdir):
-        sys.path.append(libdir)
-        try:
-            from waveshare_epd import epd4in01f
-            logging.info("Waveshare e-Paper modul sikeresen importálva alternatív útvonalon!")
-        except ImportError as e:
-            logging.error(f"Még mindig hiba az importálással: {e}")
-            logging.error("Próbáld meg manuálisan telepíteni a Waveshare e-Paper modult!")
-            sys.exit(1)
+    sys.exit(1)
 
 # Konfiguráció
 API_KEY = "1e39a49c6785626b3aca124f4d4ce591"  # OpenWeatherMap API kulcs
@@ -133,43 +470,36 @@ ORANGE = 6
 
 class WeatherDisplay:
     def __init__(self):
-        try:
-            self.epd = epd4in01f.EPD()
-            self.width = self.epd.width
-            self.height = self.epd.height
-            
-            # Font elérési út ellenőrzése és alternatív megoldás
-            font_path = "e-Paper/RaspberryPi/python/pic/Font.ttc"
-            if not os.path.exists(font_path):
-                font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-                if not os.path.exists(font_path):
-                    # Végső fallback, a legtöbb Linux rendszeren elérhető
-                    font_path = "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
-                
-            logging.info(f"Font elérési út: {font_path}")
-            
-            if not os.path.exists(font_path):
-                logging.warning(f"Font nem található: {font_path}. Rendszerfontra váltás.")
-                # Ha még mindig nincs font, használjunk alapértelmezett fontot
-                self.fonts = {
-                    'small': ImageFont.load_default(),
-                    'medium': ImageFont.load_default(),
-                    'large': ImageFont.load_default(),
-                    'xlarge': ImageFont.load_default()
-                }
-            else:
-                self.fonts = {
-                    'small': ImageFont.truetype(font_path, 16),
-                    'medium': ImageFont.truetype(font_path, 24),
-                    'large': ImageFont.truetype(font_path, 36),
-                    'xlarge': ImageFont.truetype(font_path, 48)
-                }
-                
-            self.init_display()
-            self.create_icons()
-        except Exception as e:
-            logging.error(f"Inicializálási hiba: {e}")
-            raise
+        self.epd = epd4in01f.EPD()
+        self.width = self.epd.width
+        self.height = self.epd.height
+        
+        # Alapértelmezett font
+        self.fonts = {
+            'small': self.get_font(16),
+            'medium': self.get_font(24),
+            'large': self.get_font(36),
+            'xlarge': self.get_font(48)
+        }
+        
+        self.init_display()
+        self.create_icons()
+
+    def get_font(self, size):
+        """Megfelelő font keresése a rendszeren"""
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/truetype/ttf-dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+        ]
+        
+        for path in font_paths:
+            if os.path.exists(path):
+                return ImageFont.truetype(path, size)
+        
+        logging.warning(f"Nem található megfelelő TrueType font, alapértelmezett font használata")
+        return ImageFont.load_default()
 
     def init_display(self):
         try:
@@ -568,7 +898,7 @@ if __name__ == "__main__":
 EOL
 
 # Systemd service létrehozása
-echo "[5/6] Systemd service létrehozása..."
+echo "[6/7] Systemd service létrehozása..."
 cat > weather_display.service << 'EOL'
 [Unit]
 Description=E-Paper Weather Display
@@ -594,7 +924,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable weather_display.service
 
 # Indítás
-echo "[6/6] Szolgáltatás indítása..."
+echo "[7/7] Szolgáltatás indítása..."
 sudo systemctl start weather_display.service
 
 echo "=========================================================="
@@ -605,4 +935,5 @@ echo "     újraindul.                                           "
 echo "=========================================================="
 echo "     Állapot ellenőrzése: sudo systemctl status weather_display"
 echo "     Naplók megtekintése: sudo journalctl -u weather_display"
+echo "     Hibakeresés: sudo systemctl restart weather_display"
 echo "=========================================================="
